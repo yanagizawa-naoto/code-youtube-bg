@@ -168,7 +168,7 @@ if [[ -d "$APP_BUNDLE" ]]; then
   rm -rf "$APP_BUNDLE"
 fi
 
-mkdir -p "$HOME/Applications" "$HOME/.local/lib/code-youtube-bg"
+mkdir -p "$HOME/Applications" "$HOME/.local/bin" "$HOME/.local/lib/code-youtube-bg"
 ditto "$source_app" "$APP_BUNDLE"
 
 plist="$APP_BUNDLE/Contents/Info.plist"
