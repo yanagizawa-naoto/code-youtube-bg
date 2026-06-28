@@ -132,7 +132,7 @@ html_backup_path="$html_path.before-youtube-bg"
 state_path="$user_data/youtube-bg.json"
 live_state_path="$user_data/live-state.json"
 previous_live_state_path="$live_state_path.previous"
-runtime_marker="code-youtube-bg-live-runtime.v23"
+runtime_marker="code-youtube-bg-live-runtime.v26"
 server_log_path="$user_data/youtube-bg-server.log"
 server_err_path="$user_data/youtube-bg-server.err"
 server_pid_path="$user_data/youtube-bg-server.pid"
@@ -845,22 +845,25 @@ function liveCss(op,adaptive){
       '.monaco-workbench{position:relative!important;z-index:1!important;opacity:'+op+'!important}'
     ].join('');
   }
-  var panel=clamp(op,0.62,0.98);
-  var empty=clamp(op-0.38,0.12,0.70);
-  var gutter=clamp(op-0.25,0.22,0.82);
-  var floating=clamp(op+0.02,0.72,0.98);
+  var panel=clamp(op-0.40,0.24,0.54);
+  var empty=clamp(op-0.74,0.02,0.22);
+  var gutter=clamp(op-0.58,0.10,0.38);
+  var floating=clamp(op-0.08,0.72,0.90);
+  var terminalLayer=clamp(op-0.08,0.74,0.88);
   return [
     'html,body{background:#000!important}',
     'body{position:relative!important}',
     '#vscbg-wrap{z-index:0!important}',
-    '.monaco-workbench{position:relative!important;z-index:1!important;opacity:1!important;background:transparent!important}',
-    '.monaco-workbench .part.titlebar,.monaco-workbench .part.activitybar,.monaco-workbench .part.sidebar,.monaco-workbench .part.auxiliarybar,.monaco-workbench .part.panel,.monaco-workbench .part.statusbar{background:rgba(18,18,18,'+panel+')!important}',
-    '.monaco-workbench .part.editor{background:rgba(0,0,0,'+empty+')!important}',
-    '.editor-group-container,.editor-container,.editor-instance,.monaco-editor,.monaco-editor-background,.monaco-editor .overflow-guard,.terminal-wrapper,.terminal-instance,.xterm,.xterm-viewport,.xterm-screen{background:transparent!important}',
+    '.monaco-workbench{position:relative!important;z-index:1!important;opacity:'+op+'!important;background:transparent!important;--vscode-editor-background:rgba(0,0,0,'+empty+')!important;--vscode-terminal-background:transparent!important;--vscode-sideBar-background:rgba(0,0,0,'+panel+')!important;--vscode-panel-background:rgba(0,0,0,'+empty+')!important;--vscode-tab-activeBackground:rgba(0,0,0,'+empty+')!important;--vscode-tab-inactiveBackground:rgba(0,0,0,'+empty+')!important}',
+    '.monaco-workbench .part.titlebar,.monaco-workbench .part.activitybar,.monaco-workbench .part.sidebar,.monaco-workbench .part.auxiliarybar,.monaco-workbench .part.statusbar{background:rgba(18,18,18,'+panel+')!important}',
+    '.monaco-workbench .part.editor,.monaco-workbench .part.panel{background:rgba(0,0,0,'+empty+')!important}',
+    '.monaco-workbench .part.editor .content,.monaco-workbench .part.panel .content,.monaco-workbench .editor-group-container,.monaco-workbench .editor-container,.monaco-workbench .editor-instance,.monaco-workbench .monaco-editor,.monaco-workbench .monaco-editor-background,.monaco-workbench .monaco-editor .overflow-guard,.monaco-workbench .terminal-wrapper,.monaco-workbench .terminal-instance,.monaco-workbench .terminal,.monaco-workbench .terminal-outer-container,.monaco-workbench .terminal-groups-container,.monaco-workbench .terminal-group,.monaco-workbench .xterm,.monaco-workbench .xterm-viewport,.monaco-workbench .xterm-screen,.monaco-workbench .split-view-view,.monaco-workbench .monaco-scrollable-element,.monaco-workbench .pane-body,.monaco-workbench .monaco-list,.monaco-workbench .monaco-list-rows,.monaco-workbench .explorer-folders-view{background:transparent!important;background-color:transparent!important}',
     '.monaco-editor .margin,.monaco-editor .glyph-margin,.monaco-editor .line-numbers{background:rgba(0,0,0,'+gutter+')!important}',
     '.monaco-editor .view-lines,.monaco-editor .view-line,.xterm-rows,.xterm-rows>div{background:transparent!important}',
     '.quick-input-widget,.monaco-dialog-box,.monaco-menu-container,.context-view,.notifications-toasts .notification-toast,.monaco-hover{background:rgba(24,24,24,'+floating+')!important;backdrop-filter:blur(12px)}',
-    '.monaco-list-row.focused,.monaco-list-row.selected,.monaco-list-row:hover,.monaco-tree-row.focused,.monaco-tree-row.selected,.monaco-tree-row:hover{background:rgba(70,110,170,.32)!important}'
+    '.monaco-workbench .editor-instance img,.monaco-workbench .image-preview img,.monaco-workbench .webview,.monaco-workbench .webview iframe,.monaco-workbench iframe.webview{opacity:1!important}',
+    '.monaco-workbench .xterm-screen canvas,.monaco-workbench .terminal canvas{opacity:'+terminalLayer+'!important}',
+    '.monaco-list-row.focused,.monaco-list-row.selected,.monaco-list-row:hover,.monaco-tree-row.focused,.monaco-tree-row.selected,.monaco-tree-row:hover{background:rgba(70,110,170,.28)!important}'
   ].join('');
 }
 function applyState(state){
@@ -1368,12 +1371,7 @@ function shadeTargets(){
     '.statusbar-item',
     '.part.sidebar .title',
     '.part.panel .title',
-    '.part.auxiliarybar .title',
-    '.editor-instance img',
-    '.editor-instance canvas:not(#vscbg-readability-canvas)',
-    '.editor-instance iframe',
-    '.webview',
-    '.image-preview'
+    '.part.auxiliarybar .title'
   ].join(',');
 }
 function drawShade(){
@@ -1395,8 +1393,7 @@ function drawShade(){
   if(!ctx)return;
   ctx.setTransform(dpr,0,0,dpr,0,0);
   ctx.clearRect(0,0,width,height);
-  var alpha=clamp(currentOpacity-0.16,0.32,0.78);
-  var strongAlpha=clamp(currentOpacity-0.08,0.42,0.86);
+  var alpha=clamp(currentOpacity-0.54,0.12,0.34);
   var nodes=[];
   try{nodes=Array.prototype.slice.call(document.querySelectorAll(shadeTargets()));}catch(e){nodes=[];}
   var count=0;
@@ -1404,8 +1401,7 @@ function drawShade(){
     var node=nodes[i];
     if(!node||node.id==='vscbg-readability-canvas'||node.closest&&node.closest('#vscbg-wrap'))continue;
     var text=(node.textContent||'').replace(/\\s+/g,'').trim();
-    var media=node.tagName==='IMG'||node.tagName==='IFRAME'||node.tagName==='CANVAS'||String(node.className||'').indexOf('webview')!==-1||String(node.className||'').indexOf('image-preview')!==-1;
-    if(!media&&!text&&!(node.classList&&node.classList.contains('monaco-inputbox')))continue;
+    if(!text&&!(node.classList&&node.classList.contains('monaco-inputbox')))continue;
     var rects=[];
     try{rects=Array.prototype.slice.call(node.getClientRects());}catch(e){rects=[];}
     for(var r=0;r<rects.length&&count<360;r++){
@@ -1413,15 +1409,15 @@ function drawShade(){
       if(!rect||rect.width<3||rect.height<3)continue;
       if(rect.bottom<0||rect.top>height||rect.right<0||rect.left>width)continue;
       var isLarge=rect.width>width*0.92&&rect.height>height*0.35;
-      if(isLarge&&!media)continue;
-      var padX=media?10:6;
-      var padY=media?8:2;
+      if(isLarge)continue;
+      var padX=6;
+      var padY=2;
       var x=Math.max(0,rect.left-padX);
       var y=Math.max(0,rect.top-padY);
       var w=Math.min(width-x,rect.width+padX*2);
       var h=Math.min(height-y,rect.height+padY*2);
-      ctx.fillStyle='rgba(0,0,0,'+(media?strongAlpha:alpha)+')';
-      roundedRect(ctx,x,y,w,h,media?8:4);
+      ctx.fillStyle='rgba(0,0,0,'+alpha+')';
+      roundedRect(ctx,x,y,w,h,4);
       ctx.fill();
       count++;
     }
@@ -1572,24 +1568,27 @@ function liveCss(op,adaptive){
       '.monaco-workbench{position:relative!important;z-index:1!important;opacity:'+op+'!important}'
     ].join('');
   }
-  var panel=clamp(op,0.62,0.98);
-  var empty=clamp(op-0.38,0.12,0.70);
-  var gutter=clamp(op-0.25,0.22,0.82);
-  var floating=clamp(op+0.02,0.72,0.98);
+  var panel=clamp(op-0.40,0.24,0.54);
+  var empty=clamp(op-0.74,0.02,0.22);
+  var gutter=clamp(op-0.58,0.10,0.38);
+  var floating=clamp(op-0.08,0.72,0.90);
+  var terminalLayer=clamp(op-0.08,0.74,0.88);
   return [
     'html,body{background:#000!important}',
     'body{position:relative!important}',
     '#vscbg-wrap{z-index:0!important}',
     '#vscbg-readability-canvas{display:block!important}',
-    '.monaco-workbench{position:relative!important;z-index:1!important;opacity:1!important;background:transparent!important}',
-    '.monaco-workbench .part.titlebar,.monaco-workbench .part.activitybar,.monaco-workbench .part.sidebar,.monaco-workbench .part.auxiliarybar,.monaco-workbench .part.panel,.monaco-workbench .part.statusbar{background:rgba(18,18,18,'+panel+')!important}',
-    '.monaco-workbench .part.editor{background:rgba(0,0,0,'+empty+')!important}',
-    '.editor-group-container,.editor-container,.editor-instance,.monaco-editor,.monaco-editor-background,.monaco-editor .overflow-guard,.terminal-wrapper,.terminal-instance,.xterm,.xterm-viewport,.xterm-screen{background:transparent!important}',
+    '.monaco-workbench{position:relative!important;z-index:1!important;opacity:'+op+'!important;background:transparent!important;--vscode-editor-background:rgba(0,0,0,'+empty+')!important;--vscode-terminal-background:transparent!important;--vscode-sideBar-background:rgba(0,0,0,'+panel+')!important;--vscode-panel-background:rgba(0,0,0,'+empty+')!important;--vscode-tab-activeBackground:rgba(0,0,0,'+empty+')!important;--vscode-tab-inactiveBackground:rgba(0,0,0,'+empty+')!important}',
+    '.monaco-workbench .part.titlebar,.monaco-workbench .part.activitybar,.monaco-workbench .part.sidebar,.monaco-workbench .part.auxiliarybar,.monaco-workbench .part.statusbar{background:rgba(18,18,18,'+panel+')!important}',
+    '.monaco-workbench .part.editor,.monaco-workbench .part.panel{background:rgba(0,0,0,'+empty+')!important}',
+    '.monaco-workbench .part.editor .content,.monaco-workbench .part.panel .content,.monaco-workbench .editor-group-container,.monaco-workbench .editor-container,.monaco-workbench .editor-instance,.monaco-workbench .monaco-editor,.monaco-workbench .monaco-editor-background,.monaco-workbench .monaco-editor .overflow-guard,.monaco-workbench .terminal-wrapper,.monaco-workbench .terminal-instance,.monaco-workbench .terminal,.monaco-workbench .terminal-outer-container,.monaco-workbench .terminal-groups-container,.monaco-workbench .terminal-group,.monaco-workbench .xterm,.monaco-workbench .xterm-viewport,.monaco-workbench .xterm-screen,.monaco-workbench .split-view-view,.monaco-workbench .monaco-scrollable-element,.monaco-workbench .pane-body,.monaco-workbench .monaco-list,.monaco-workbench .monaco-list-rows,.monaco-workbench .explorer-folders-view{background:transparent!important;background-color:transparent!important}',
     '.monaco-editor .margin,.monaco-editor .glyph-margin,.monaco-editor .line-numbers{background:rgba(0,0,0,'+gutter+')!important}',
     '.monaco-editor .view-lines,.monaco-editor .view-line,.xterm-rows,.xterm-rows>div{background:transparent!important}',
     '.tabs-container,.title.tabs,.breadcrumbs-below-tabs,.editor-group-watermark{background:rgba(0,0,0,'+empty+')!important}',
     '.quick-input-widget,.monaco-dialog-box,.monaco-menu-container,.context-view,.notifications-toasts .notification-toast,.monaco-hover{background:rgba(24,24,24,'+floating+')!important;backdrop-filter:blur(12px)}',
-    '.monaco-list-row.focused,.monaco-list-row.selected,.monaco-list-row:hover,.monaco-tree-row.focused,.monaco-tree-row.selected,.monaco-tree-row:hover{background:rgba(70,110,170,.32)!important}',
+    '.monaco-workbench .editor-instance img,.monaco-workbench .image-preview img,.monaco-workbench .webview,.monaco-workbench .webview iframe,.monaco-workbench iframe.webview{opacity:1!important}',
+    '.monaco-workbench .xterm-screen canvas,.monaco-workbench .terminal canvas{opacity:'+terminalLayer+'!important}',
+    '.monaco-list-row.focused,.monaco-list-row.selected,.monaco-list-row:hover,.monaco-tree-row.focused,.monaco-tree-row.selected,.monaco-tree-row:hover{background:rgba(70,110,170,.28)!important}',
     '.monaco-editor .current-line,.monaco-editor .view-overlays .current-line{background:rgba(255,255,255,.07)!important}'
   ].join('');
 }
