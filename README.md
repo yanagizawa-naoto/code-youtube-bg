@@ -58,6 +58,18 @@ Use video only:
 CODE_YOUTUBE_BG_OPACITY=0.85 code-youtube-bg --stream --mute 'https://www.youtube.com/watch?v=VIDEO_ID'
 ```
 
+Use adaptive readability mode, which keeps text-heavy areas darker while letting empty editor space show more video:
+
+```bash
+CODE_YOUTUBE_BG_ADAPTIVE=1 CODE_YOUTUBE_BG_OPACITY=0.90 code-youtube-bg --stream --audio --volume 0.50 'https://www.youtube.com/watch?v=VIDEO_ID'
+```
+
+Disable adaptive mode and use the older whole-window opacity behavior:
+
+```bash
+CODE_YOUTUBE_BG_ADAPTIVE=0 CODE_YOUTUBE_BG_OPACITY=0.90 code-youtube-bg --stream --audio --volume 0.50 'https://www.youtube.com/watch?v=VIDEO_ID'
+```
+
 Use a local downloaded MP4 instead of streaming:
 
 ```bash
@@ -68,6 +80,8 @@ code-youtube-bg --local --audio 'https://www.youtube.com/watch?v=VIDEO_ID'
 
 - `CODE_YOUTUBE_BG_OPACITY=0.75` makes the video more visible.
 - `CODE_YOUTUBE_BG_OPACITY=0.90` makes editor text easier to read.
+- `CODE_YOUTUBE_BG_ADAPTIVE=1` keeps text and media readable while empty areas show more video.
+- `CODE_YOUTUBE_BG_ADAPTIVE=0` uses the legacy whole-window opacity behavior.
 - `--volume 0.50` sets audio volume from `0.0` to `1.0`.
 - `--mute` disables audio.
 - `--audio` enables audio.
