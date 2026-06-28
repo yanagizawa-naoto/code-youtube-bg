@@ -132,7 +132,7 @@ html_backup_path="$html_path.before-youtube-bg"
 state_path="$user_data/youtube-bg.json"
 live_state_path="$user_data/live-state.json"
 previous_live_state_path="$live_state_path.previous"
-runtime_marker="code-youtube-bg-live-runtime.v26"
+runtime_marker="code-youtube-bg-live-runtime.v29"
 server_log_path="$user_data/youtube-bg-server.log"
 server_err_path="$user_data/youtube-bg-server.err"
 server_pid_path="$user_data/youtube-bg-server.pid"
@@ -846,23 +846,23 @@ function liveCss(op,adaptive){
     ].join('');
   }
   var panel=clamp(op-0.40,0.24,0.54);
-  var empty=clamp(op-0.74,0.02,0.22);
+  var empty=clamp(op-0.86,0,0.10);
   var gutter=clamp(op-0.58,0.10,0.38);
   var floating=clamp(op-0.08,0.72,0.90);
-  var terminalLayer=clamp(op-0.08,0.74,0.88);
   return [
     'html,body{background:#000!important}',
     'body{position:relative!important}',
     '#vscbg-wrap{z-index:0!important}',
     '.monaco-workbench{position:relative!important;z-index:1!important;opacity:'+op+'!important;background:transparent!important;--vscode-editor-background:rgba(0,0,0,'+empty+')!important;--vscode-terminal-background:transparent!important;--vscode-sideBar-background:rgba(0,0,0,'+panel+')!important;--vscode-panel-background:rgba(0,0,0,'+empty+')!important;--vscode-tab-activeBackground:rgba(0,0,0,'+empty+')!important;--vscode-tab-inactiveBackground:rgba(0,0,0,'+empty+')!important}',
     '.monaco-workbench .part.titlebar,.monaco-workbench .part.activitybar,.monaco-workbench .part.sidebar,.monaco-workbench .part.auxiliarybar,.monaco-workbench .part.statusbar{background:rgba(18,18,18,'+panel+')!important}',
-    '.monaco-workbench .part.editor,.monaco-workbench .part.panel{background:rgba(0,0,0,'+empty+')!important}',
-    '.monaco-workbench .part.editor .content,.monaco-workbench .part.panel .content,.monaco-workbench .editor-group-container,.monaco-workbench .editor-container,.monaco-workbench .editor-instance,.monaco-workbench .monaco-editor,.monaco-workbench .monaco-editor-background,.monaco-workbench .monaco-editor .overflow-guard,.monaco-workbench .terminal-wrapper,.monaco-workbench .terminal-instance,.monaco-workbench .terminal,.monaco-workbench .terminal-outer-container,.monaco-workbench .terminal-groups-container,.monaco-workbench .terminal-group,.monaco-workbench .xterm,.monaco-workbench .xterm-viewport,.monaco-workbench .xterm-screen,.monaco-workbench .split-view-view,.monaco-workbench .monaco-scrollable-element,.monaco-workbench .pane-body,.monaco-workbench .monaco-list,.monaco-workbench .monaco-list-rows,.monaco-workbench .explorer-folders-view{background:transparent!important;background-color:transparent!important}',
+    '.monaco-workbench .part.editor{background:rgba(0,0,0,'+empty+')!important}',
+    '.monaco-workbench .part.panel{background:transparent!important;background-color:transparent!important}',
+    '.monaco-workbench .part.editor .content,.monaco-workbench .part.panel .content,.monaco-workbench .part.panel *,.monaco-workbench .panel,.monaco-workbench .basepanel,.monaco-workbench .panel-body,.monaco-workbench .composite.title,.monaco-workbench .composite.panel,.monaco-workbench .pane-composite-part,.monaco-workbench .pane-composite-part>.content,.monaco-workbench .terminal-tab-list,.monaco-workbench .terminal-tabs-list,.monaco-workbench .editor-group-container,.monaco-workbench .editor-container,.monaco-workbench .editor-instance,.monaco-workbench .monaco-editor,.monaco-workbench .monaco-editor-background,.monaco-workbench .monaco-editor .overflow-guard,.monaco-workbench .terminal-wrapper,.monaco-workbench .terminal-instance,.monaco-workbench .terminal,.monaco-workbench .terminal-outer-container,.monaco-workbench .terminal-groups-container,.monaco-workbench .terminal-group,.monaco-workbench .terminal-integrated,.monaco-workbench .terminal-outer-container .terminal,.monaco-workbench .xterm,.monaco-workbench .xterm-viewport,.monaco-workbench .xterm-screen,.monaco-workbench .xterm-scroll-area,.monaco-workbench .split-view-view,.monaco-workbench .monaco-scrollable-element,.monaco-workbench .pane-body,.monaco-workbench .monaco-list,.monaco-workbench .monaco-list-rows,.monaco-workbench .explorer-folders-view{background:transparent!important;background-color:transparent!important}',
     '.monaco-editor .margin,.monaco-editor .glyph-margin,.monaco-editor .line-numbers{background:rgba(0,0,0,'+gutter+')!important}',
     '.monaco-editor .view-lines,.monaco-editor .view-line,.xterm-rows,.xterm-rows>div{background:transparent!important}',
     '.quick-input-widget,.monaco-dialog-box,.monaco-menu-container,.context-view,.notifications-toasts .notification-toast,.monaco-hover{background:rgba(24,24,24,'+floating+')!important;backdrop-filter:blur(12px)}',
     '.monaco-workbench .editor-instance img,.monaco-workbench .image-preview img,.monaco-workbench .webview,.monaco-workbench .webview iframe,.monaco-workbench iframe.webview{opacity:1!important}',
-    '.monaco-workbench .xterm-screen canvas,.monaco-workbench .terminal canvas{opacity:'+terminalLayer+'!important}',
+    '.monaco-workbench .xterm-screen canvas,.monaco-workbench .terminal canvas{opacity:1!important;background:transparent!important;mix-blend-mode:screen!important}',
     '.monaco-list-row.focused,.monaco-list-row.selected,.monaco-list-row:hover,.monaco-tree-row.focused,.monaco-tree-row.selected,.monaco-tree-row:hover{background:rgba(70,110,170,.28)!important}'
   ].join('');
 }
@@ -1569,10 +1569,9 @@ function liveCss(op,adaptive){
     ].join('');
   }
   var panel=clamp(op-0.40,0.24,0.54);
-  var empty=clamp(op-0.74,0.02,0.22);
+  var empty=clamp(op-0.86,0,0.10);
   var gutter=clamp(op-0.58,0.10,0.38);
   var floating=clamp(op-0.08,0.72,0.90);
-  var terminalLayer=clamp(op-0.08,0.74,0.88);
   return [
     'html,body{background:#000!important}',
     'body{position:relative!important}',
@@ -1580,14 +1579,15 @@ function liveCss(op,adaptive){
     '#vscbg-readability-canvas{display:block!important}',
     '.monaco-workbench{position:relative!important;z-index:1!important;opacity:'+op+'!important;background:transparent!important;--vscode-editor-background:rgba(0,0,0,'+empty+')!important;--vscode-terminal-background:transparent!important;--vscode-sideBar-background:rgba(0,0,0,'+panel+')!important;--vscode-panel-background:rgba(0,0,0,'+empty+')!important;--vscode-tab-activeBackground:rgba(0,0,0,'+empty+')!important;--vscode-tab-inactiveBackground:rgba(0,0,0,'+empty+')!important}',
     '.monaco-workbench .part.titlebar,.monaco-workbench .part.activitybar,.monaco-workbench .part.sidebar,.monaco-workbench .part.auxiliarybar,.monaco-workbench .part.statusbar{background:rgba(18,18,18,'+panel+')!important}',
-    '.monaco-workbench .part.editor,.monaco-workbench .part.panel{background:rgba(0,0,0,'+empty+')!important}',
-    '.monaco-workbench .part.editor .content,.monaco-workbench .part.panel .content,.monaco-workbench .editor-group-container,.monaco-workbench .editor-container,.monaco-workbench .editor-instance,.monaco-workbench .monaco-editor,.monaco-workbench .monaco-editor-background,.monaco-workbench .monaco-editor .overflow-guard,.monaco-workbench .terminal-wrapper,.monaco-workbench .terminal-instance,.monaco-workbench .terminal,.monaco-workbench .terminal-outer-container,.monaco-workbench .terminal-groups-container,.monaco-workbench .terminal-group,.monaco-workbench .xterm,.monaco-workbench .xterm-viewport,.monaco-workbench .xterm-screen,.monaco-workbench .split-view-view,.monaco-workbench .monaco-scrollable-element,.monaco-workbench .pane-body,.monaco-workbench .monaco-list,.monaco-workbench .monaco-list-rows,.monaco-workbench .explorer-folders-view{background:transparent!important;background-color:transparent!important}',
+    '.monaco-workbench .part.editor{background:rgba(0,0,0,'+empty+')!important}',
+    '.monaco-workbench .part.panel{background:transparent!important;background-color:transparent!important}',
+    '.monaco-workbench .part.editor .content,.monaco-workbench .part.panel .content,.monaco-workbench .part.panel *,.monaco-workbench .panel,.monaco-workbench .basepanel,.monaco-workbench .panel-body,.monaco-workbench .composite.title,.monaco-workbench .composite.panel,.monaco-workbench .pane-composite-part,.monaco-workbench .pane-composite-part>.content,.monaco-workbench .terminal-tab-list,.monaco-workbench .terminal-tabs-list,.monaco-workbench .editor-group-container,.monaco-workbench .editor-container,.monaco-workbench .editor-instance,.monaco-workbench .monaco-editor,.monaco-workbench .monaco-editor-background,.monaco-workbench .monaco-editor .overflow-guard,.monaco-workbench .terminal-wrapper,.monaco-workbench .terminal-instance,.monaco-workbench .terminal,.monaco-workbench .terminal-outer-container,.monaco-workbench .terminal-groups-container,.monaco-workbench .terminal-group,.monaco-workbench .terminal-integrated,.monaco-workbench .terminal-outer-container .terminal,.monaco-workbench .xterm,.monaco-workbench .xterm-viewport,.monaco-workbench .xterm-screen,.monaco-workbench .xterm-scroll-area,.monaco-workbench .split-view-view,.monaco-workbench .monaco-scrollable-element,.monaco-workbench .pane-body,.monaco-workbench .monaco-list,.monaco-workbench .monaco-list-rows,.monaco-workbench .explorer-folders-view{background:transparent!important;background-color:transparent!important}',
     '.monaco-editor .margin,.monaco-editor .glyph-margin,.monaco-editor .line-numbers{background:rgba(0,0,0,'+gutter+')!important}',
     '.monaco-editor .view-lines,.monaco-editor .view-line,.xterm-rows,.xterm-rows>div{background:transparent!important}',
     '.tabs-container,.title.tabs,.breadcrumbs-below-tabs,.editor-group-watermark{background:rgba(0,0,0,'+empty+')!important}',
     '.quick-input-widget,.monaco-dialog-box,.monaco-menu-container,.context-view,.notifications-toasts .notification-toast,.monaco-hover{background:rgba(24,24,24,'+floating+')!important;backdrop-filter:blur(12px)}',
     '.monaco-workbench .editor-instance img,.monaco-workbench .image-preview img,.monaco-workbench .webview,.monaco-workbench .webview iframe,.monaco-workbench iframe.webview{opacity:1!important}',
-    '.monaco-workbench .xterm-screen canvas,.monaco-workbench .terminal canvas{opacity:'+terminalLayer+'!important}',
+    '.monaco-workbench .xterm-screen canvas,.monaco-workbench .terminal canvas{opacity:1!important;background:transparent!important;mix-blend-mode:screen!important}',
     '.monaco-list-row.focused,.monaco-list-row.selected,.monaco-list-row:hover,.monaco-tree-row.focused,.monaco-tree-row.selected,.monaco-tree-row:hover{background:rgba(70,110,170,.28)!important}',
     '.monaco-editor .current-line,.monaco-editor .view-overlays .current-line{background:rgba(255,255,255,.07)!important}'
   ].join('');
