@@ -440,14 +440,14 @@ async function evaluate(webSocketDebuggerUrl, expression, userGesture = false) {
       continue;
     }
 
-    const youtube = targets.find(target =>
+    const youtubes = targets.filter(target =>
       target.webSocketDebuggerUrl &&
       (
         String(target.url || '').startsWith('https://www.youtube.com/embed/') ||
         String(target.url || '').startsWith('https://www.youtube-nocookie.com/embed/')
       )
     );
-    if (!youtube) {
+    if (youtubes.length === 0) {
       await sleep(500);
       continue;
     }
@@ -473,22 +473,30 @@ async function evaluate(webSocketDebuggerUrl, expression, userGesture = false) {
       }
     })()`;
 
-    await evaluate(youtube.webSocketDebuggerUrl, expression, true);
-    await sleep(5000);
-    const status = await evaluate(youtube.webSocketDebuggerUrl, `(() => {
-      const player = document.getElementById('movie_player');
-      const video = document.querySelector('video');
-      return {
-        ok: Boolean(video && !video.paused && !video.muted && video.currentTime > 0),
-        state: player && player.getPlayerState && player.getPlayerState(),
-        time: video && video.currentTime,
-        paused: video && video.paused,
-        muted: video && video.muted
-      };
-    })()`);
+    for (const youtube of youtubes) {
+      await evaluate(youtube.webSocketDebuggerUrl, expression, true).catch(() => null);
+    }
 
-    if (status && status.ok) {
-      console.log('YouTube iframe audio unlocked');
+    await sleep(5000);
+
+    let okCount = 0;
+    for (const youtube of youtubes) {
+      const status = await evaluate(youtube.webSocketDebuggerUrl, `(() => {
+        const player = document.getElementById('movie_player');
+        const video = document.querySelector('video');
+        return {
+          ok: Boolean(video && !video.paused && !video.muted && video.currentTime > 0),
+          state: player && player.getPlayerState && player.getPlayerState(),
+          time: video && video.currentTime,
+          paused: video && video.paused,
+          muted: video && video.muted
+        };
+      })()`).catch(() => null);
+      if (status && status.ok) okCount += 1;
+    }
+
+    if (okCount > 0 && okCount === youtubes.length) {
+      console.log(`YouTube iframe audio unlocked (${okCount}/${youtubes.length} windows)`);
       return;
     }
   }
