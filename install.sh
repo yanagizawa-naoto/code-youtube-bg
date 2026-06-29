@@ -19,6 +19,7 @@ Options:
 
 Environment:
   CODE_APP_PATH=/Applications/Visual Studio Code.app
+  CODE_YOUTUBE_BG_SKIP_FFMPEG_PATCH=1  # Do not patch the dedicated app's ffmpeg
 USAGE
 }
 
@@ -111,6 +112,80 @@ plist_set() {
     /usr/libexec/PlistBuddy -c "Add :$key string $value" "$plist" >/dev/null
 }
 
+app_electron_version() {
+  local package_json="$1"
+  node - "$package_json" <<'NODE'
+const fs = require('fs');
+const packageJson = process.argv[2];
+try {
+  const packageInfo = JSON.parse(fs.readFileSync(packageJson, 'utf8'));
+  const version = packageInfo.devDependencies && packageInfo.devDependencies.electron || '';
+  if (/^\d+\.\d+\.\d+$/.test(version)) {
+    process.stdout.write(version);
+    process.exit(0);
+  }
+} catch (_) {}
+process.stdout.write('42.2.0');
+NODE
+}
+
+patch_ffmpeg_for_youtube() {
+  if [[ "${CODE_YOUTUBE_BG_SKIP_FFMPEG_PATCH:-0}" == "1" ]]; then
+    return 0
+  fi
+
+  local arch
+  case "$(uname -m)" in
+    arm64)
+      arch="arm64"
+      ;;
+    x86_64)
+      arch="x64"
+      ;;
+    *)
+      echo "Unsupported macOS architecture for Electron ffmpeg patch: $(uname -m)" >&2
+      exit 1
+      ;;
+  esac
+
+  local electron_version
+  electron_version="$(app_electron_version "$APP_BUNDLE/Contents/Resources/app/package.json")"
+
+  local cache_dir="$HOME/.cache/code-youtube-bg/electron-v${electron_version}-darwin-${arch}"
+  local zip_path="$cache_dir/electron.zip"
+  local ffmpeg_src="$cache_dir/Electron.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libffmpeg.dylib"
+  local ffmpeg_dst="$APP_BUNDLE/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libffmpeg.dylib"
+  local ffmpeg_backup="$ffmpeg_dst.before-code-youtube-bg"
+
+  if [[ ! -f "$ffmpeg_dst" ]]; then
+    echo "Could not find dedicated app ffmpeg library: $ffmpeg_dst" >&2
+    exit 1
+  fi
+
+  if [[ ! -f "$ffmpeg_src" ]]; then
+    mkdir -p "$cache_dir"
+    curl -L --fail --progress-bar \
+      -o "$zip_path" \
+      "https://github.com/electron/electron/releases/download/v${electron_version}/electron-v${electron_version}-darwin-${arch}.zip"
+    unzip -q -o "$zip_path" \
+      "Electron.app/Contents/Frameworks/Electron Framework.framework/Versions/A/Libraries/libffmpeg.dylib" \
+      -d "$cache_dir"
+  fi
+
+  if [[ ! -f "$ffmpeg_src" ]]; then
+    echo "Failed to extract Electron ffmpeg library for ${electron_version} darwin-${arch}" >&2
+    exit 1
+  fi
+
+  if [[ ! -f "$ffmpeg_backup" ]]; then
+    cp -p "$ffmpeg_dst" "$ffmpeg_backup"
+  fi
+
+  if ! cmp -s "$ffmpeg_src" "$ffmpeg_dst"; then
+    cp -p "$ffmpeg_src" "$ffmpeg_dst"
+  fi
+}
+
 stop_existing_app() {
   osascript -e 'tell application id "com.naoto.CodeVideoBG" to quit' >/dev/null 2>&1 || true
   pkill -TERM -f "$APP_BUNDLE/Contents/MacOS/Code" >/dev/null 2>&1 || true
@@ -169,6 +244,7 @@ plist_set "$plist" CFBundleIdentifier "$BUNDLE_ID"
 plist_set "$plist" CFBundleDisplayName "$APP_NAME"
 
 xattr -dr com.apple.quarantine "$APP_BUNDLE" >/dev/null 2>&1 || true
+patch_ffmpeg_for_youtube
 codesign --force --deep --sign - "$APP_BUNDLE" >/dev/null
 
 install -m 0755 "$REPO_ROOT/bin/code-youtube-bg" "$HOME/.local/bin/code-youtube-bg"

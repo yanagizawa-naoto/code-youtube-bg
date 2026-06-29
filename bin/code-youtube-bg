@@ -90,6 +90,7 @@ fi
 input="${args[0]}"
 opacity="${CODE_YOUTUBE_BG_OPACITY:-0.75}"
 server_port="${CODE_YOUTUBE_BG_PORT:-45173}"
+debug_port="${CODE_YOUTUBE_BG_DEBUG_PORT:-9223}"
 app="$HOME/Applications/Code Video BG.app"
 user_data="$HOME/Library/Application Support/Code Video BG"
 extensions_dir="$HOME/.vscode-video-bg/extensions"
@@ -103,7 +104,7 @@ html_backup_path="$html_path.before-youtube-bg"
 runtime_js_path="$app/Contents/Resources/app/out/vs/code/electron-browser/workbench/code-youtube-bg-runtime.js"
 state_path="$user_data/youtube-bg.json"
 live_state_path="$user_data/live-state.json"
-runtime_marker="code-youtube-bg-embed-runtime.v4"
+runtime_marker="code-youtube-bg-embed-runtime.v6"
 server_log_path="$user_data/youtube-bg-server.log"
 server_err_path="$user_data/youtube-bg-server.err"
 server_pid_path="$user_data/youtube-bg-server.pid"
@@ -318,6 +319,15 @@ process.stdout.write(String(value));
 NODE
 )"
 
+debug_port="$("$node_bin" - "$debug_port" <<'NODE'
+const value = Number(process.argv[2]);
+if (!Number.isInteger(value) || value < 1024 || value > 65535) {
+  throw new Error('CODE_YOUTUBE_BG_DEBUG_PORT must be an integer from 1024 to 65535');
+}
+process.stdout.write(String(value));
+NODE
+)"
+
 stop_code_video_bg() {
   osascript -e 'tell application id "com.naoto.CodeVideoBG" to quit' >/dev/null 2>&1 || true
   pkill -TERM -f "$app" 2>/dev/null || true
@@ -350,13 +360,149 @@ activate_code_video_bg() {
     -e 'end ignoring' >/dev/null 2>&1 || true
 }
 
+debug_available() {
+  curl -fsS "http://127.0.0.1:$debug_port/json/list" >/dev/null 2>&1
+}
+
+unlock_youtube_audio() {
+  [[ "$audio_enabled" == "1" ]] || return 0
+
+  "$node_bin" - "$debug_port" "$server_port" "$volume" <<'NODE'
+const http = require('http');
+
+const debugPort = Number(process.argv[2]);
+const serverPort = Number(process.argv[3]);
+const volume = Math.max(0, Math.min(1, Number(process.argv[4])));
+
+if (typeof WebSocket !== 'function') {
+  process.exit(0);
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function getJson(path) {
+  return new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port: debugPort, path }, res => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(body));
+        } catch (error) {
+          reject(error);
+        }
+      });
+    }).on('error', reject);
+  });
+}
+
+async function evaluate(webSocketDebuggerUrl, expression, userGesture = false) {
+  const ws = new WebSocket(webSocketDebuggerUrl);
+  let id = 0;
+  const pending = new Map();
+  ws.onmessage = event => {
+    const message = JSON.parse(event.data);
+    if (message.id && pending.has(message.id)) {
+      pending.get(message.id)(message);
+      pending.delete(message.id);
+    }
+  };
+  await new Promise((resolve, reject) => {
+    ws.onopen = resolve;
+    ws.onerror = reject;
+  });
+  function send(method, params = {}) {
+    const messageId = ++id;
+    ws.send(JSON.stringify({ id: messageId, method, params }));
+    return new Promise(resolve => pending.set(messageId, resolve));
+  }
+  await send('Runtime.enable');
+  const result = await send('Runtime.evaluate', {
+    expression,
+    returnByValue: true,
+    awaitPromise: true,
+    userGesture,
+  });
+  ws.close();
+  return result && result.result && result.result.result && result.result.result.value;
+}
+
+(async () => {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    let targets = [];
+    try {
+      targets = await getJson('/json/list');
+    } catch (_) {
+      await sleep(500);
+      continue;
+    }
+
+    const youtube = targets.find(target =>
+      target.webSocketDebuggerUrl &&
+      (
+        String(target.url || '').startsWith('https://www.youtube.com/embed/') ||
+        String(target.url || '').startsWith('https://www.youtube-nocookie.com/embed/')
+      )
+    );
+    if (!youtube) {
+      await sleep(500);
+      continue;
+    }
+
+    const expression = `(() => {
+      try {
+        const player = document.getElementById('movie_player');
+        if (player && typeof player.setVolume === 'function') player.setVolume(${Math.round(volume * 100)});
+        if (player && typeof player.unMute === 'function') player.unMute();
+        if (player && typeof player.playVideo === 'function') player.playVideo();
+        const button = document.querySelector('.ytmCuedOverlayPlayButton,.ytp-large-play-button,.ytp-play-button');
+        if (button) button.click();
+        const video = document.querySelector('video');
+        return {
+          ok: Boolean(player || button || video),
+          state: player && player.getPlayerState && player.getPlayerState(),
+          time: video && video.currentTime,
+          paused: video && video.paused,
+          muted: video && video.muted
+        };
+      } catch (error) {
+        return { ok: false, reason: String(error && error.message || error) };
+      }
+    })()`;
+
+    await evaluate(youtube.webSocketDebuggerUrl, expression, true);
+    await sleep(5000);
+    const status = await evaluate(youtube.webSocketDebuggerUrl, `(() => {
+      const player = document.getElementById('movie_player');
+      const video = document.querySelector('video');
+      return {
+        ok: Boolean(video && !video.paused && !video.muted && video.currentTime > 0),
+        state: player && player.getPlayerState && player.getPlayerState(),
+        time: video && video.currentTime,
+        paused: video && video.paused,
+        muted: video && video.muted
+      };
+    })()`);
+
+    if (status && status.ok) {
+      console.log('YouTube iframe audio unlocked');
+      return;
+    }
+  }
+})().catch(() => {});
+NODE
+}
+
 health_ok() {
   local health_json="$1"
   HEALTH_JSON="$health_json" "$node_bin" - "$target_id" <<'NODE' >/dev/null 2>&1
 const expected = process.argv[2];
 try {
   const health = JSON.parse(process.env.HEALTH_JSON || '{}');
-  process.exit(health.serverVersion === 19 && health.currentTargetId === expected ? 0 : 1);
+  process.exit(health.serverVersion === 21 && health.currentTargetId === expected ? 0 : 1);
 } catch {
   process.exit(1);
 }
@@ -722,6 +868,11 @@ if [[ "$needs_restart" == "1" || "$html_changed" == "1" ]]; then
   start_bg_server
 fi
 
+if [[ "$audio_enabled" == "1" && "$app_running" == "1" ]] && ! debug_available; then
+  stop_code_video_bg
+  app_running=0
+fi
+
 if [[ "$app_running" == "0" ]]; then
   open -na "$app" --args \
     --user-data-dir "$user_data" \
@@ -729,6 +880,7 @@ if [[ "$app_running" == "0" ]]; then
     --autoplay-policy=no-user-gesture-required \
     --password-store=basic \
     --use-mock-keychain \
+    --remote-debugging-port="$debug_port" \
     --new-window "$HOME"
   sleep 3
   echo "Code Video BG launched with YouTube embed background: $target_url"
@@ -737,3 +889,4 @@ else
 fi
 
 activate_code_video_bg
+unlock_youtube_audio

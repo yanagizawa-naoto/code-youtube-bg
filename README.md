@@ -15,6 +15,8 @@ The installer can install this with Homebrew:
 
 - `node`
 
+During install, the dedicated app's `libffmpeg.dylib` is replaced with the matching official Electron build. This is needed because the VS Code-bundled ffmpeg can fail to decode YouTube's Opus audio tracks. Your normal VS Code app is not modified.
+
 ## Install
 
 ```bash
@@ -68,6 +70,7 @@ CODE_YOUTUBE_BG_OPACITY=0.85 code-youtube-bg --mute 'https://www.youtube.com/wat
 - `--volume 0.50` sets audio volume from `0.0` to `1.0`.
 - `--mute` disables audio.
 - `--audio` enables audio.
+- `CODE_YOUTUBE_BG_DEBUG_PORT=9223` changes the local DevTools port used to unlock iframe audio.
 
 ## Stop Audio
 
@@ -95,6 +98,7 @@ Remove app support data too:
 
 - This is experimental and macOS-only.
 - This public build uses YouTube's embeddable iframe player. It does not download videos or resolve direct media stream URLs.
+- `--audio` starts the dedicated app with a localhost-only DevTools port so the command can perform the same user-gesture click YouTube requires for iframe audio.
 - Videos must allow YouTube embedding. Age gates, sign-in checks, regional restrictions, and embedding-disabled videos are handled by YouTube and are not bypassed.
 - Playlist URLs are resolved through YouTube's public Atom feed and played as a queue of regular YouTube iframe embeds. This avoids direct media URLs while working around playlist embeds that YouTube rejects.
 - VS Code updates can change internal files. Re-run `./install.sh --force` if the dedicated app breaks after an update.
