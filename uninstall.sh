@@ -33,7 +33,6 @@ osascript -e 'tell application id "com.naoto.CodeVideoBG" to quit' >/dev/null 2>
 launchctl bootout "gui/$(id -u)" "$USER_DATA/code-youtube-bg-server.plist" >/dev/null 2>&1 || true
 launchctl remove "$LABEL" >/dev/null 2>&1 || true
 pkill -TERM -f "code-youtube-bg-server" >/dev/null 2>&1 || true
-pkill -TERM -f "mpv .*--title=code-youtube-bg-audio" >/dev/null 2>&1 || true
 
 rm -f "$HOME/.local/bin/code-youtube-bg"
 rm -rf "$HOME/.local/lib/code-youtube-bg"

@@ -79,32 +79,10 @@ find_code_app() {
   return 1
 }
 
-find_code_cli() {
-  local source_app="$1"
-  local candidates=(
-    "$(command -v code || true)"
-    "$source_app/Contents/Resources/app/bin/code"
-    "$APP_BUNDLE/Contents/Resources/app/bin/code"
-  )
-
-  local path
-  for path in "${candidates[@]}"; do
-    if [[ -n "$path" && -x "$path" ]]; then
-      printf '%s\n' "$path"
-      return 0
-    fi
-  done
-
-  return 1
-}
-
 install_deps() {
   local missing_pkgs=()
 
   command -v node >/dev/null 2>&1 || missing_pkgs+=(node)
-  command -v yt-dlp >/dev/null 2>&1 || missing_pkgs+=(yt-dlp)
-  command -v mpv >/dev/null 2>&1 || missing_pkgs+=(mpv)
-  command -v ffmpeg >/dev/null 2>&1 || missing_pkgs+=(ffmpeg)
 
   if [[ ${#missing_pkgs[@]} -eq 0 ]]; then
     return 0
@@ -131,6 +109,20 @@ plist_set() {
   local value="$3"
   /usr/libexec/PlistBuddy -c "Set :$key $value" "$plist" >/dev/null 2>&1 ||
     /usr/libexec/PlistBuddy -c "Add :$key string $value" "$plist" >/dev/null
+}
+
+stop_existing_app() {
+  osascript -e 'tell application id "com.naoto.CodeVideoBG" to quit' >/dev/null 2>&1 || true
+  pkill -TERM -f "$APP_BUNDLE/Contents/MacOS/Code" >/dev/null 2>&1 || true
+
+  for _ in {1..30}; do
+    if ! pgrep -f "$APP_BUNDLE/Contents/MacOS/Code" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  pkill -KILL -f "$APP_BUNDLE/Contents/MacOS/Code" >/dev/null 2>&1 || true
 }
 
 ensure_path() {
@@ -165,6 +157,7 @@ if [[ -d "$APP_BUNDLE" ]]; then
     echo "$APP_BUNDLE already exists. Re-run with --force to replace it." >&2
     exit 1
   fi
+  stop_existing_app
   rm -rf "$APP_BUNDLE"
 fi
 
@@ -173,7 +166,6 @@ ditto "$source_app" "$APP_BUNDLE"
 
 plist="$APP_BUNDLE/Contents/Info.plist"
 plist_set "$plist" CFBundleIdentifier "$BUNDLE_ID"
-plist_set "$plist" CFBundleName "$APP_NAME"
 plist_set "$plist" CFBundleDisplayName "$APP_NAME"
 
 xattr -dr com.apple.quarantine "$APP_BUNDLE" >/dev/null 2>&1 || true
@@ -181,14 +173,6 @@ codesign --force --deep --sign - "$APP_BUNDLE" >/dev/null
 
 install -m 0755 "$REPO_ROOT/bin/code-youtube-bg" "$HOME/.local/bin/code-youtube-bg"
 install -m 0755 "$REPO_ROOT/lib/server.js" "$HOME/.local/lib/code-youtube-bg/server.js"
-
-code_cli="$(find_code_cli "$source_app" || true)"
-if [[ -z "$code_cli" ]]; then
-  echo "Could not find the VS Code command line helper to install caoge.vscode-background." >&2
-  echo "Open VS Code, install the extension 'caoge.vscode-background', then run code-youtube-bg." >&2
-else
-  "$code_cli" --install-extension caoge.vscode-background --force >/dev/null
-fi
 
 ensure_path
 
@@ -199,7 +183,7 @@ Restart your terminal, or run:
   export PATH="\$HOME/.local/bin:\$PATH"
 
 Try:
-  CODE_YOUTUBE_BG_OPACITY=0.90 code-youtube-bg --stream --audio --volume 0.50 'https://www.youtube.com/watch?v=VIDEO_ID'
+  CODE_YOUTUBE_BG_OPACITY=0.90 code-youtube-bg --audio --volume 0.50 'https://www.youtube.com/watch?v=VIDEO_ID'
 
 The dedicated app is:
   $APP_BUNDLE

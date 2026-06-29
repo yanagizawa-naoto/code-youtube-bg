@@ -1,57 +1,46 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -lt 1 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+usage() {
   cat <<'USAGE'
 Usage:
-  code-youtube-bg [--local] [--audio|--mute] [--volume 0.7] [--audio-engine inline|mpv] [--audio-delay 0] <youtube-url-or-video-id>
-  code-youtube-bg --stream [--audio|--mute] [--volume 0.7] [--audio-engine inline|mpv] [--audio-delay 0] <youtube-url-or-video-id>
-  code-youtube-bg --embed <youtube-url-or-video-id>
+  code-youtube-bg [--embed] [--audio|--mute] [--volume 0.7] <youtube-url-or-video-id>
 
 Examples:
   code-youtube-bg https://www.youtube.com/watch?v=SjmWM9P5mZ8
   code-youtube-bg SjmWM9P5mZ8
-  code-youtube-bg --stream --audio --volume 0.6 SjmWM9P5mZ8
-  code-youtube-bg --embed SjmWM9P5mZ8
+  code-youtube-bg --audio --volume 0.35 SjmWM9P5mZ8
 
-Modes:
-  --local  Download/reuse a local MP4 and use it as the VS Code background. Default.
-  --stream Resolve a temporary YouTube media stream URL and play it directly.
-  --embed  Experimental YouTube iframe background. YouTube may block autoplay.
+Mode:
+  This public build only uses YouTube's embeddable iframe player.
+  It does not download videos or resolve direct media stream URLs.
 
 Environment:
   CODE_YOUTUBE_BG_OPACITY=0.75  # VS Code UI opacity, 0.0-1.0
-  CODE_YOUTUBE_BG_PORT=45173    # Local temporary wrapper server port
-  CODE_YOUTUBE_BG_AUDIO=0       # 1 enables audio by default
-  CODE_YOUTUBE_BG_VOLUME=0.7    # Audio volume, 0.0-1.0
-  CODE_YOUTUBE_BG_AUDIO_ENGINE=mpv     # mpv is auto-synced by the local server; inline is experimental
-  CODE_YOUTUBE_BG_AUDIO_DELAY=0        # compatibility fallback only. Positive delays audio; negative advances audio.
-  CODE_YOUTUBE_BG_COOKIES_FROM_BROWSER=chrome
-  CODE_YOUTUBE_BG_FFMPEG=/opt/homebrew/bin/ffmpeg
+  CODE_YOUTUBE_BG_PORT=45173    # Local iframe wrapper server port
+  CODE_YOUTUBE_BG_AUDIO=0       # 1 asks the YouTube iframe to unmute
+  CODE_YOUTUBE_BG_VOLUME=0.7    # YouTube iframe volume, 0.0-1.0
 USAGE
+}
+
+if [[ $# -lt 1 || "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
   exit 0
 fi
 
-mode="local"
 audio_enabled="${CODE_YOUTUBE_BG_AUDIO:-0}"
-audio_engine="${CODE_YOUTUBE_BG_AUDIO_ENGINE:-mpv}"
 volume="${CODE_YOUTUBE_BG_VOLUME:-0.7}"
-audio_delay="${CODE_YOUTUBE_BG_AUDIO_DELAY:-0}"
 args=()
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
-    --local)
-      mode="local"
-      shift
-      ;;
-    --stream)
-      mode="stream"
-      shift
-      ;;
     --embed)
-      mode="embed"
       shift
+      ;;
+    --stream|--local)
+      echo "$1 was removed from the public build." >&2
+      echo "This build only uses YouTube's embeddable iframe player and does not download or resolve direct media URLs." >&2
+      exit 2
       ;;
     --audio)
       audio_enabled="1"
@@ -69,21 +58,9 @@ while [[ $# -gt 0 ]]; do
       volume="$2"
       shift 2
       ;;
-    --audio-engine)
-      if [[ $# -lt 2 ]]; then
-        echo "--audio-engine requires inline or mpv" >&2
-        exit 1
-      fi
-      audio_engine="$2"
-      shift 2
-      ;;
-    --audio-delay)
-      if [[ $# -lt 2 ]]; then
-        echo "--audio-delay requires a value in seconds, for example -0.2 or 0.2" >&2
-        exit 1
-      fi
-      audio_delay="$2"
-      shift 2
+    --audio-engine|--audio-delay)
+      echo "$1 is not supported in the iframe-only public build." >&2
+      exit 2
       ;;
     --)
       shift
@@ -94,6 +71,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     -*)
       echo "Unknown option: $1" >&2
+      usage >&2
       exit 1
       ;;
     *)
@@ -114,41 +92,21 @@ server_port="${CODE_YOUTUBE_BG_PORT:-45173}"
 app="$HOME/Applications/Code Video BG.app"
 user_data="$HOME/Library/Application Support/Code Video BG"
 extensions_dir="$HOME/.vscode-video-bg/extensions"
-download_dir="$user_data/youtube-videos"
-ext_root="${CODE_YOUTUBE_BG_EXTENSION_ROOT:-}"
 server_path="$HOME/.local/lib/code-youtube-bg/server.js"
 server_label="com.naoto.code-youtube-bg.server"
-audio_label="code-youtube-bg-audio"
 node_bin="$(command -v node || true)"
-ytdlp_bin="$(command -v yt-dlp || true)"
-mpv_bin="$(command -v mpv || true)"
-ffmpeg_bin="${CODE_YOUTUBE_BG_FFMPEG:-$(command -v ffmpeg || true)}"
 js_path="$app/Contents/Resources/app/out/vs/workbench/workbench.desktop.main.js"
 backup_path="$js_path.before-video-bg"
 html_path="$app/Contents/Resources/app/out/vs/code/electron-browser/workbench/workbench.html"
 html_backup_path="$html_path.before-youtube-bg"
+runtime_js_path="$app/Contents/Resources/app/out/vs/code/electron-browser/workbench/code-youtube-bg-runtime.js"
 state_path="$user_data/youtube-bg.json"
 live_state_path="$user_data/live-state.json"
-previous_live_state_path="$live_state_path.previous"
-runtime_marker="code-youtube-bg-live-runtime.v21"
+runtime_marker="code-youtube-bg-embed-runtime.v3"
 server_log_path="$user_data/youtube-bg-server.log"
 server_err_path="$user_data/youtube-bg-server.err"
 server_pid_path="$user_data/youtube-bg-server.pid"
 server_plist_path="$user_data/code-youtube-bg-server.plist"
-audio_log_path="$user_data/youtube-bg-audio.log"
-audio_err_path="$user_data/youtube-bg-audio.err"
-audio_ipc_path="$user_data/youtube-bg-audio.sock"
-
-if [[ -z "$ext_root" ]]; then
-  for candidate in \
-    "$HOME"/.vscode/extensions/caoge.vscode-background-* \
-    "$extensions_dir"/caoge.vscode-background-*; do
-    if [[ -d "$candidate" ]]; then
-      ext_root="$candidate"
-      break
-    fi
-  done
-fi
 
 if [[ ! -d "$app" ]]; then
   echo "Code Video BG.app not found: $app" >&2
@@ -165,13 +123,8 @@ if [[ ! -f "$html_path" ]]; then
   exit 1
 fi
 
-if [[ ! -d "$ext_root" ]]; then
-  echo "Required extension files not found: $ext_root" >&2
-  exit 1
-fi
-
 if [[ ! -f "$server_path" ]]; then
-  echo "Local YouTube wrapper server not found: $server_path" >&2
+  echo "Local YouTube iframe wrapper server not found: $server_path" >&2
   exit 1
 fi
 
@@ -181,246 +134,6 @@ if [[ ! -x "$node_bin" ]]; then
 fi
 
 mkdir -p "$user_data" "$extensions_dir"
-
-stop_code_video_bg() {
-  osascript -e 'tell application id "com.naoto.CodeVideoBG" to quit' >/dev/null 2>&1 || true
-  pkill -TERM -f "$app" 2>/dev/null || true
-  pkill -TERM -f "$user_data" 2>/dev/null || true
-
-  for _ in {1..30}; do
-    if ! pgrep -f "$app" >/dev/null 2>&1 && ! pgrep -f "$user_data" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 0.2
-  done
-
-  pkill -KILL -f "$app" 2>/dev/null || true
-  pkill -KILL -f "$user_data" 2>/dev/null || true
-  sleep 0.5
-}
-
-is_code_video_bg_running() {
-  if osascript -e 'application id "com.naoto.CodeVideoBG" is running' 2>/dev/null | grep -q true; then
-    return 0
-  fi
-
-  pgrep -f "$app/Contents/MacOS/Code" >/dev/null 2>&1
-}
-
-activate_code_video_bg() {
-  osascript \
-    -e 'ignoring application responses' \
-    -e 'tell application id "com.naoto.CodeVideoBG" to activate' \
-    -e 'end ignoring' >/dev/null 2>&1 || true
-}
-
-start_bg_server() {
-  local health=""
-  health="$(curl -fsS "http://127.0.0.1:$server_port/health" 2>/dev/null || true)"
-  if [[ "$health" == *"\"hasStatePath\":true"* && "$health" == *"\"serverVersion\":16"* ]]; then
-    return 0
-  fi
-
-  launchctl bootout "gui/$(id -u)" "$server_plist_path" 2>/dev/null || true
-  launchctl remove "$server_label" 2>/dev/null || true
-  if [[ -f "$server_pid_path" ]]; then
-    local old_server_pid=""
-    old_server_pid="$(sed -n '1p' "$server_pid_path" 2>/dev/null || true)"
-    if [[ "$old_server_pid" =~ ^[0-9]+$ ]]; then
-      kill "$old_server_pid" 2>/dev/null || true
-    fi
-    rm -f "$server_pid_path"
-  fi
-  pkill -TERM -f "code-youtube-bg-server .* $server_port" 2>/dev/null || true
-
-  for _ in {1..30}; do
-    if ! pgrep -f "code-youtube-bg-server .* $server_port" >/dev/null 2>&1 && ! lsof -nP -iTCP:"$server_port" -sTCP:LISTEN >/dev/null 2>&1; then
-      break
-    fi
-    sleep 0.1
-  done
-  : > "$server_log_path"
-  : > "$server_err_path"
-
-  local server_ready=0
-  "$node_bin" - "$server_plist_path" "$server_label" "$node_bin" "$server_path" "$video_id" "$server_port" "$live_state_path" "$ffmpeg_bin" "$mpv_bin" "$audio_log_path" "$audio_err_path" "$audio_ipc_path" "$server_log_path" "$server_err_path" <<'NODE'
-const fs = require('fs');
-const [
-  plistPath,
-  label,
-  nodeBin,
-  serverPath,
-  videoId,
-  serverPort,
-  liveStatePath,
-  ffmpegBin,
-  mpvBin,
-  audioLogPath,
-  audioErrPath,
-  audioIpcPath,
-  serverLogPath,
-  serverErrPath,
-] = process.argv.slice(2);
-
-function esc(value) {
-  return String(value)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-function stringArray(values) {
-  return `<array>\n${values.map(value => `\t\t<string>${esc(value)}</string>`).join('\n')}\n\t</array>`;
-}
-
-function envDict(values) {
-  return `<dict>\n${Object.entries(values).map(([key, value]) => `\t\t<key>${esc(key)}</key>\n\t\t<string>${esc(value)}</string>`).join('\n')}\n\t</dict>`;
-}
-
-const xml = `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-\t<key>Label</key>
-\t<string>${esc(label)}</string>
-\t<key>ProgramArguments</key>
-\t${stringArray([nodeBin, serverPath, videoId, serverPort])}
-\t<key>EnvironmentVariables</key>
-\t${envDict({
-  CODE_YOUTUBE_BG_STATE_PATH: liveStatePath,
-  CODE_YOUTUBE_BG_FFMPEG: ffmpegBin,
-  CODE_YOUTUBE_BG_MPV: mpvBin,
-  CODE_YOUTUBE_BG_AUDIO_LOG: audioLogPath,
-  CODE_YOUTUBE_BG_AUDIO_ERR: audioErrPath,
-  CODE_YOUTUBE_BG_AUDIO_IPC: audioIpcPath,
-})}
-\t<key>RunAtLoad</key>
-\t<true/>
-\t<key>ProcessType</key>
-\t<string>Background</string>
-\t<key>StandardOutPath</key>
-\t<string>${esc(serverLogPath)}</string>
-\t<key>StandardErrorPath</key>
-\t<string>${esc(serverErrPath)}</string>
-</dict>
-</plist>
-`;
-fs.writeFileSync(plistPath, xml, 'utf8');
-NODE
-
-  if ! launchctl bootstrap "gui/$(id -u)" "$server_plist_path" 2>>"$server_err_path"; then
-    nohup /usr/bin/env CODE_YOUTUBE_BG_STATE_PATH="$live_state_path" \
-      CODE_YOUTUBE_BG_FFMPEG="$ffmpeg_bin" \
-      CODE_YOUTUBE_BG_MPV="$mpv_bin" \
-      CODE_YOUTUBE_BG_AUDIO_LOG="$audio_log_path" \
-      CODE_YOUTUBE_BG_AUDIO_ERR="$audio_err_path" \
-      CODE_YOUTUBE_BG_AUDIO_IPC="$audio_ipc_path" \
-      "$node_bin" "$server_path" "$video_id" "$server_port" \
-      >>"$server_log_path" 2>>"$server_err_path" </dev/null &
-    local new_server_pid="$!"
-    printf '%s\n' "$new_server_pid" > "$server_pid_path"
-    disown "$new_server_pid" 2>/dev/null || true
-  else
-    rm -f "$server_pid_path"
-  fi
-
-  for _ in {1..50}; do
-    health="$(curl -fsS "http://127.0.0.1:$server_port/health" 2>/dev/null || true)"
-    if [[ "$health" == *"\"hasStatePath\":true"* && "$health" == *"\"serverVersion\":16"* ]]; then
-      server_ready=1
-      break
-    fi
-    sleep 0.1
-  done
-
-  if [[ "$server_ready" != "1" ]]; then
-    echo "Failed to start local YouTube background server on port $server_port" >&2
-    tail -n 50 "$server_log_path" >&2 || true
-    tail -n 50 "$server_err_path" >&2 || true
-    exit 1
-  fi
-}
-
-stop_audio_player() {
-  launchctl remove "$audio_label" 2>/dev/null || true
-  if [[ -x "$mpv_bin" ]]; then
-    pkill -TERM -f "^$mpv_bin .*127\\.0\\.0\\.1:$server_port/audio" 2>/dev/null || true
-    pkill -TERM -f "^$mpv_bin .*127\\.0\\.0\\.1:$server_port/mux" 2>/dev/null || true
-    pkill -TERM -f "^$mpv_bin .*--title=code-youtube-bg-audio" 2>/dev/null || true
-  fi
-  rm -f "$audio_ipc_path"
-}
-
-update_audio_player() {
-  stop_audio_player
-
-  if [[ "$audio_enabled" != "1" ]]; then
-    return 0
-  fi
-
-  if [[ ! -x "$mpv_bin" ]]; then
-    echo "mpv not found; background audio disabled" >&2
-    return 0
-  fi
-
-  : > "$audio_log_path"
-  : > "$audio_err_path"
-  return 0
-}
-
-current_stream_token() {
-  if [[ ! -f "$live_state_path" ]]; then
-    return 0
-  fi
-
-  "$node_bin" - "$live_state_path" <<'NODE'
-const fs = require('fs');
-try {
-  const state = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-  process.stdout.write(String(state.mediaToken || ''));
-} catch (_) {}
-NODE
-}
-
-verify_stream_not_rejected() {
-  local expected_token="$1"
-  local health=""
-  local saw_rejection=0
-
-  if [[ -z "$expected_token" ]]; then
-    return 0
-  fi
-
-  for _ in {1..50}; do
-    health="$(curl -fsS "http://127.0.0.1:$server_port/health" 2>/dev/null || true)"
-    if [[ "$health" == *"\"key\":\"$expected_token\""* ]]; then
-      if [[ "$health" == *"\"reason\":\"play-ok\""* ]]; then
-        return 0
-      fi
-      if [[ "$health" == *"\"reason\":\"play-rejected\""* || "$health" == *"\"reason\":\"error\""* ]]; then
-        saw_rejection=1
-      fi
-    fi
-    sleep 0.2
-  done
-
-  if [[ "$saw_rejection" == "1" ]]; then
-    return 1
-  fi
-
-  return 0
-}
-
-restore_previous_live_state() {
-  if [[ -f "$previous_live_state_path" ]]; then
-    cp -p "$previous_live_state_path" "$live_state_path"
-    return 0
-  fi
-
-  return 1
-}
 
 video_meta="$("$node_bin" - "$input" <<'NODE'
 const input = process.argv[2];
@@ -454,22 +167,27 @@ function extractVideoId(value) {
     throw new Error(`Could not extract a YouTube video ID from: ${trimmed}`);
   }
 
-  return id;
+  process.stdout.write(`${id}\thttps://www.youtube.com/watch?v=${id}`);
 }
 
-const videoId = extractVideoId(input);
-process.stdout.write(`${videoId}\thttps://www.youtube.com/watch?v=${videoId}`);
+extractVideoId(input);
 NODE
 )"
-IFS=$'\t' read -r video_id video_url <<< "$video_meta"
+
+video_id="${video_meta%%$'\t'*}"
+video_url="${video_meta#*$'\t'}"
+
+opacity="$("$node_bin" - "$opacity" <<'NODE'
+const value = Number(process.argv[2]);
+if (!Number.isFinite(value) || value < 0 || value > 1) {
+  throw new Error('CODE_YOUTUBE_BG_OPACITY must be a number from 0.0 to 1.0');
+}
+process.stdout.write(String(value));
+NODE
+)"
 
 if [[ "$audio_enabled" != "0" && "$audio_enabled" != "1" ]]; then
   echo "CODE_YOUTUBE_BG_AUDIO must be 0 or 1" >&2
-  exit 1
-fi
-
-if [[ "$audio_engine" != "mpv" && "$audio_engine" != "inline" ]]; then
-  echo "CODE_YOUTUBE_BG_AUDIO_ENGINE must be mpv or inline" >&2
   exit 1
 fi
 
@@ -482,109 +200,401 @@ process.stdout.write(String(value));
 NODE
 )"
 
-audio_delay="$("$node_bin" - "$audio_delay" <<'NODE'
-const value = Number(process.argv[2]);
-if (!Number.isFinite(value) || value < -10 || value > 10) {
-  throw new Error('Audio delay must be a number from -10.0 to 10.0 seconds');
+stop_code_video_bg() {
+  osascript -e 'tell application id "com.naoto.CodeVideoBG" to quit' >/dev/null 2>&1 || true
+  pkill -TERM -f "$app" 2>/dev/null || true
+  pkill -TERM -f "$user_data" 2>/dev/null || true
+
+  for _ in {1..30}; do
+    if ! pgrep -f "$app" >/dev/null 2>&1 && ! pgrep -f "$user_data" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  pkill -KILL -f "$app" 2>/dev/null || true
+  pkill -KILL -f "$user_data" 2>/dev/null || true
+  sleep 0.5
 }
-process.stdout.write(String(value));
+
+is_code_video_bg_running() {
+  if osascript -e 'application id "com.naoto.CodeVideoBG" is running' 2>/dev/null | grep -q true; then
+    return 0
+  fi
+
+  pgrep -f "$app/Contents/MacOS/Code" >/dev/null 2>&1
+}
+
+activate_code_video_bg() {
+  osascript \
+    -e 'ignoring application responses' \
+    -e 'tell application id "com.naoto.CodeVideoBG" to activate' \
+    -e 'end ignoring' >/dev/null 2>&1 || true
+}
+
+health_ok() {
+  local health_json="$1"
+  HEALTH_JSON="$health_json" "$node_bin" - "$video_id" <<'NODE' >/dev/null 2>&1
+const expected = process.argv[2];
+try {
+  const health = JSON.parse(process.env.HEALTH_JSON || '{}');
+  process.exit(health.serverVersion === 17 && health.currentVideoId === expected ? 0 : 1);
+} catch {
+  process.exit(1);
+}
 NODE
-)"
+}
 
-if [[ "$mode" == "local" ]]; then
-  if [[ ! -x "$ytdlp_bin" ]]; then
-    echo "yt-dlp not found in PATH" >&2
-    exit 1
+start_bg_server() {
+  local health=""
+  health="$(curl -fsS "http://127.0.0.1:$server_port/health" 2>/dev/null || true)"
+  if health_ok "$health"; then
+    return 0
   fi
 
-  mkdir -p "$download_dir"
+  launchctl bootout "gui/$(id -u)" "$server_plist_path" 2>/dev/null || true
   launchctl remove "$server_label" 2>/dev/null || true
-  stop_code_video_bg
+  if [[ -f "$server_pid_path" ]]; then
+    local old_server_pid=""
+    old_server_pid="$(sed -n '1p' "$server_pid_path" 2>/dev/null || true)"
+    if [[ "$old_server_pid" =~ ^[0-9]+$ ]]; then
+      kill "$old_server_pid" 2>/dev/null || true
+    fi
+    rm -f "$server_pid_path"
+  fi
+  pkill -TERM -f "code-youtube-bg-server .* $server_port" 2>/dev/null || true
 
-  echo "Downloading or reusing local MP4 for $video_id"
-  video_path="$("$ytdlp_bin" \
-    --no-playlist \
-    --quiet \
-    --no-warnings \
-    --merge-output-format mp4 \
-    -f 'bv*[ext=mp4][vcodec^=avc1]+ba[ext=m4a]/b[ext=mp4][vcodec^=avc1]/bv*+ba/best' \
-    -P "$download_dir" \
-    -o '%(title).120B [%(id)s].%(ext)s' \
-    --print after_move:filepath \
-    "$video_url")"
+  for _ in {1..30}; do
+    if ! pgrep -f "code-youtube-bg-server .* $server_port" >/dev/null 2>&1 && ! lsof -nP -iTCP:"$server_port" -sTCP:LISTEN >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
 
-  if [[ ! -f "$video_path" ]]; then
-    echo "Downloaded video file not found: $video_path" >&2
-    exit 1
+  : > "$server_log_path"
+  : > "$server_err_path"
+
+  "$node_bin" - "$server_plist_path" "$server_label" "$node_bin" "$server_path" "$video_id" "$server_port" "$live_state_path" "$server_log_path" "$server_err_path" <<'NODE'
+const fs = require('fs');
+const [
+  plistPath,
+  label,
+  nodeBin,
+  serverPath,
+  videoId,
+  serverPort,
+  liveStatePath,
+  serverLogPath,
+  serverErrPath,
+] = process.argv.slice(2);
+
+function esc(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+function stringArray(values) {
+  return `<array>\n${values.map(value => `\t\t<string>${esc(value)}</string>`).join('\n')}\n\t</array>`;
+}
+
+function envDict(values) {
+  return `<dict>\n${Object.entries(values).map(([key, value]) => `\t\t<key>${esc(key)}</key>\n\t\t<string>${esc(value)}</string>`).join('\n')}\n\t</dict>`;
+}
+
+const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>Label</key>
+\t<string>${esc(label)}</string>
+\t<key>ProgramArguments</key>
+\t${stringArray([nodeBin, serverPath, videoId, serverPort])}
+\t<key>EnvironmentVariables</key>
+\t${envDict({
+  CODE_YOUTUBE_BG_STATE_PATH: liveStatePath,
+})}
+\t<key>RunAtLoad</key>
+\t<true/>
+\t<key>ProcessType</key>
+\t<string>Background</string>
+\t<key>StandardOutPath</key>
+\t<string>${esc(serverLogPath)}</string>
+\t<key>StandardErrorPath</key>
+\t<string>${esc(serverErrPath)}</string>
+</dict>
+</plist>
+`;
+fs.writeFileSync(plistPath, xml, 'utf8');
+NODE
+
+  if ! launchctl bootstrap "gui/$(id -u)" "$server_plist_path" 2>>"$server_err_path"; then
+    nohup /usr/bin/env CODE_YOUTUBE_BG_STATE_PATH="$live_state_path" \
+      "$node_bin" "$server_path" "$video_id" "$server_port" \
+      >>"$server_log_path" 2>>"$server_err_path" </dev/null &
+    local new_server_pid="$!"
+    printf '%s\n' "$new_server_pid" > "$server_pid_path"
+    disown "$new_server_pid" 2>/dev/null || true
+  else
+    rm -f "$server_pid_path"
   fi
 
-  "$node_bin" - "$input" "$opacity" "$audio_enabled" "$volume" "$ext_root" "$js_path" "$backup_path" "$state_path" "$video_path" "$video_id" <<'NODE'
+  local server_ready=0
+  for _ in {1..120}; do
+    health="$(curl -fsS "http://127.0.0.1:$server_port/health" 2>/dev/null || true)"
+    if health_ok "$health"; then
+      server_ready=1
+      break
+    fi
+    sleep 0.1
+  done
+
+  if [[ "$server_ready" != "1" ]]; then
+    echo "Failed to start local YouTube iframe wrapper server on port $server_port" >&2
+    tail -n 50 "$server_log_path" >&2 || true
+    tail -n 50 "$server_err_path" >&2 || true
+    exit 1
+  fi
+}
+
+patch_result="$("$node_bin" - "$input" "$opacity" "$audio_enabled" "$volume" "$server_port" "$js_path" "$backup_path" "$html_path" "$html_backup_path" "$runtime_js_path" "$state_path" "$live_state_path" "$video_id" "$runtime_marker" <<'NODE'
 const fs = require('fs');
 const path = require('path');
 
-const [input, opacityText, audioEnabledText, volumeText, extRoot, jsPath, backupPath, statePath, videoPath, videoId] = process.argv.slice(2);
+const [input, opacityText, audioEnabledText, volumeText, serverPortText, jsPath, backupPath, htmlPath, htmlBackupPath, runtimeJsPath, statePath, liveStatePath, videoId, runtimeMarker] = process.argv.slice(2);
 const opacity = Number(opacityText);
 const muted = audioEnabledText !== '1';
 const volume = Number(volumeText);
+const serverPort = Number(serverPortText);
 
 if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) {
   throw new Error(`Invalid CODE_YOUTUBE_BG_OPACITY: ${opacityText}`);
 }
 
-const { generatePatch } = require(path.join(extRoot, 'out/patchGenerator.js'));
-const { applyPatch } = require(path.join(extRoot, 'out/patchFile.js'));
-
-if (!fs.existsSync(backupPath)) {
-  fs.copyFileSync(jsPath, backupPath);
+if (!Number.isFinite(volume) || volume < 0 || volume > 1) {
+  throw new Error(`Invalid volume: ${volumeText}`);
 }
 
-const original = fs.readFileSync(backupPath, 'utf8');
-const patch = generatePatch({
-  videos: [videoPath],
-  transitions: ['instant'],
-  opacity,
-  switchInterval: 0,
-  theme: 'glass',
-  extensionPath: extRoot,
-});
-const keepPlayingPatch = `(function(){
-function kickBackgroundVideos(){
-  var videos=document.querySelectorAll('#vscbg-wrap video');
-  for(var i=0;i<videos.length;i++){
-    var v=videos[i];
-    v.muted=${JSON.stringify(muted)};
-    v.volume=${JSON.stringify(volume)};
-    v.loop=true;
-    v.autoplay=true;
-    v.play().catch(function(){});
+if (!Number.isInteger(serverPort) || serverPort < 1024 || serverPort > 65535) {
+  throw new Error(`Invalid CODE_YOUTUBE_BG_PORT: ${serverPortText}`);
+}
+
+function patchWorkbenchHtml() {
+  const originalHtml = fs.readFileSync(htmlPath, 'utf8');
+  if (!fs.existsSync(htmlBackupPath)) {
+    fs.copyFileSync(htmlPath, htmlBackupPath);
+  }
+
+  const localOrigin = `http://127.0.0.1:${serverPort}`;
+  const runtimeScript = '<script src="./code-youtube-bg-runtime.js"></script>';
+  const workbenchScript = '<script src="./workbench.js" type="module"></script>';
+  let html = originalHtml;
+  html = html.replace(
+    /connect-src\s+([\s\S]*?)\s+;/,
+    match => match.includes(localOrigin) ? match : match.replace(/\s+;/, `\n\t\t\t\t\t${localOrigin}\n\t\t\t\t;`)
+  );
+  html = html.replace(
+    /frame-src\s+([\s\S]*?)\s+;/,
+    match => match.includes(localOrigin) ? match : match.replace(/\s+;/, `\n\t\t\t\t\t${localOrigin}\n\t\t\t\t;`)
+  );
+
+  if (!html.includes(runtimeScript)) {
+    if (!html.includes(workbenchScript)) {
+      throw new Error('Could not find VS Code workbench script tag in workbench.html');
+    }
+    html = html.replace(workbenchScript, `${runtimeScript}\n\t${workbenchScript}`);
+  }
+
+  if (html !== originalHtml) {
+    fs.writeFileSync(htmlPath, html, 'utf8');
+  }
+
+  return html !== originalHtml;
+}
+
+function runtimeSource() {
+  const stateUrl = `http://127.0.0.1:${serverPort}/state.json`;
+  return `(function(){
+var RUNTIME=${JSON.stringify(runtimeMarker)};
+var stateUrl=${JSON.stringify(stateUrl)};
+var debugUrl=stateUrl.replace(/\\/state\\.json(?:\\?.*)?$/,'/debug');
+var wrap=null;
+var frame=null;
+var style=null;
+var currentKey='';
+function clamp(n,min,max){return Math.min(max,Math.max(min,n));}
+function ensure(){
+  if(!style||!style.isConnected){
+    style=document.getElementById('code-youtube-bg-embed-css');
+  }
+  if(!style){
+    style=document.createElement('style');
+    style.id='code-youtube-bg-embed-css';
+    document.head.appendChild(style);
+  }
+  if(!wrap||!wrap.isConnected){
+    wrap=document.getElementById('vscbg-wrap');
+  }
+  if(!wrap){
+    wrap=document.createElement('div');
+    wrap.id='vscbg-wrap';
+    wrap.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;z-index:0;pointer-events:none;overflow:hidden;background:#000;';
+    document.body.insertBefore(wrap,document.body.firstChild);
   }
 }
-setTimeout(kickBackgroundVideos,250);
-setTimeout(kickBackgroundVideos,1000);
-setInterval(kickBackgroundVideos,2000);
-document.addEventListener('visibilitychange',kickBackgroundVideos);
-window.addEventListener('focus',kickBackgroundVideos);
+function liveCss(op){
+  return [
+    'html,body{background:#000!important}',
+    'body{position:relative!important}',
+    '#vscbg-wrap{z-index:0!important}',
+    '.monaco-workbench{position:relative!important;z-index:1!important;opacity:'+op+'!important}'
+  ].join('');
+}
+function wrapperSrc(state,key){
+  var params=new URLSearchParams({
+    v:String(state.videoId||''),
+    token:key,
+    muted:state.muted===false?'0':'1',
+    volume:String(clamp(Number(state.volume)||0,0,1)),
+    _:String(Date.now())
+  });
+  return 'http://127.0.0.1:'+${JSON.stringify(serverPort)}+'/?'+params.toString();
+}
+function report(reason,state){
+  try{
+    fetch(debugUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+      runtime:RUNTIME,
+      reason:reason||'tick',
+      key:currentKey,
+      videoId:state&&state.videoId||'',
+      muted:!(state&&state.muted===false),
+      volume:state&&state.volume,
+      receivedAt:new Date().toISOString()
+    }),keepalive:true}).catch(function(){});
+  }catch(e){}
+}
+function applyState(state){
+  if(!state||!state.videoId)return;
+  ensure();
+  var op=Number(state.opacity);
+  if(!isFinite(op))op=0.75;
+  op=clamp(op,0,1);
+  style.textContent=liveCss(op);
+  report('state-applied',state);
+  var key=String(state.mediaToken||state.updatedAt||state.videoId);
+  if(frame&&currentKey===key){
+    report('unchanged',state);
+    return;
+  }
+  var next=document.createElement('iframe');
+  next.id='code-youtube-bg-embed-frame';
+  next.title='YouTube embed background';
+  next.allow='autoplay; encrypted-media; picture-in-picture; fullscreen';
+  next.referrerPolicy='strict-origin-when-cross-origin';
+  next.style.cssText='position:absolute;inset:0;width:100%;height:100%;border:0;opacity:0;transition:opacity .18s linear;pointer-events:none;background:#000;';
+  next.src=wrapperSrc(state,key);
+  next.addEventListener('load',function(){
+    report('iframe-loaded',state);
+    next.style.opacity='1';
+    var old=frame;
+    frame=next;
+    currentKey=key;
+    if(old&&old!==next){
+      old.style.opacity='0';
+      setTimeout(function(){try{old.remove();}catch(e){}},220);
+    }
+  },{once:true});
+  wrap.appendChild(next);
+}
+function poll(){
+  fetch(stateUrl+'?_='+Date.now(),{cache:'no-store'})
+    .then(function(r){return r.ok?r.json():null;})
+    .then(applyState)
+    .catch(function(){});
+}
+function start(){
+  if(window.__codeYoutubeEmbedBgStarted)return;
+  window.__codeYoutubeEmbedBgStarted=true;
+  ensure();
+  poll();
+  setInterval(poll,2000);
+  window.addEventListener('focus',poll);
+}
+if(document.body){start();}
+else{document.addEventListener('DOMContentLoaded',start);}
 })();`;
+}
 
-fs.writeFileSync(jsPath, applyPatch(original, `${patch}\n${keepPlayingPatch}`), 'utf8');
+const htmlChanged = patchWorkbenchHtml();
 
-fs.mkdirSync(path.dirname(statePath), { recursive: true });
-fs.writeFileSync(statePath, JSON.stringify({
-  type: 'local',
+let jsChanged = false;
+if (fs.existsSync(backupPath)) {
+  const originalJs = fs.readFileSync(backupPath, 'utf8');
+  const currentJs = fs.existsSync(jsPath) ? fs.readFileSync(jsPath, 'utf8') : '';
+  if (currentJs !== originalJs) {
+    fs.writeFileSync(jsPath, originalJs, 'utf8');
+    jsChanged = true;
+  }
+}
+
+const runtime = runtimeSource();
+const currentRuntime = fs.existsSync(runtimeJsPath) ? fs.readFileSync(runtimeJsPath, 'utf8') : '';
+const runtimeChanged = currentRuntime !== runtime;
+if (runtimeChanged) {
+  fs.writeFileSync(runtimeJsPath, runtime, 'utf8');
+}
+
+const mediaToken = `${Date.now()}-${videoId}`;
+const commonState = {
+  type: 'embed',
   input,
   videoId,
-  opacity,
+  mediaToken,
   muted,
   volume,
-  localPath: videoPath,
+  opacity,
+  serverPort,
+  stateUrl: `http://127.0.0.1:${serverPort}/state.json`,
+  wrapperUrl: `http://127.0.0.1:${serverPort}/`,
   updatedAt: new Date().toISOString(),
-}, null, 2) + '\n');
+};
 
-console.log(`Local video background set to ${videoPath}`);
+fs.mkdirSync(path.dirname(statePath), { recursive: true });
+fs.writeFileSync(statePath, JSON.stringify(commonState, null, 2) + '\n');
+fs.writeFileSync(liveStatePath, JSON.stringify(commonState, null, 2) + '\n');
+
+console.log(`needs_restart=${jsChanged || runtimeChanged ? 1 : 0}`);
+console.log(`html_changed=${htmlChanged ? 1 : 0}`);
+console.log(`YouTube embed background set for ${videoId}`);
 NODE
+)"
 
+printf '%s\n' "$patch_result" | sed '/^needs_restart=/d;/^html_changed=/d'
+needs_restart="$(printf '%s\n' "$patch_result" | sed -n 's/^needs_restart=//p' | tail -n 1)"
+html_changed="$(printf '%s\n' "$patch_result" | sed -n 's/^html_changed=//p' | tail -n 1)"
+
+start_bg_server
+
+if [[ "$needs_restart" == "1" || "$html_changed" == "1" ]]; then
   codesign --force --deep --sign - "$app" >/dev/null
+fi
 
+app_running=0
+if is_code_video_bg_running; then
+  app_running=1
+fi
+
+if [[ "$needs_restart" == "1" || "$html_changed" == "1" ]]; then
+  stop_code_video_bg
+  app_running=0
+  rm -rf "$user_data/CachedData" "$user_data/Code Cache" 2>/dev/null || true
+  start_bg_server
+fi
+
+if [[ "$app_running" == "0" ]]; then
   open -na "$app" --args \
     --user-data-dir "$user_data" \
     --extensions-dir "$extensions_dir" \
@@ -592,1133 +602,10 @@ NODE
     --password-store=basic \
     --use-mock-keychain \
     --new-window "$HOME"
-
   sleep 3
-  activate_code_video_bg
-
-  echo "Code Video BG launched with local YouTube background: $video_url"
-  exit 0
+  echo "Code Video BG launched with YouTube embed background: $video_url"
+else
+  echo "Code Video BG YouTube embed background updated without restart: $video_url"
 fi
 
-if [[ "$mode" == "stream" ]]; then
-  if [[ "${CODE_YOUTUBE_BG_IFRAME:-0}" == "1" ]]; then
-  patch_result="$("$node_bin" - "$input" "$opacity" "$audio_enabled" "$volume" "$server_port" "$ext_root" "$js_path" "$backup_path" "$html_path" "$html_backup_path" "$state_path" "$live_state_path" "$video_id" "$runtime_marker" <<'NODE'
-const fs = require('fs');
-const path = require('path');
-
-const [input, opacityText, audioEnabledText, volumeText, serverPortText, extRoot, jsPath, backupPath, htmlPath, htmlBackupPath, statePath, liveStatePath, videoId, runtimeMarker] = process.argv.slice(2);
-const opacity = Number(opacityText);
-const muted = audioEnabledText !== '1';
-const volume = Number(volumeText);
-const serverPort = Number(serverPortText);
-
-if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) {
-  throw new Error(`Invalid CODE_YOUTUBE_BG_OPACITY: ${opacityText}`);
-}
-
-if (!Number.isFinite(volume) || volume < 0 || volume > 1) {
-  throw new Error(`Invalid volume: ${volumeText}`);
-}
-
-if (!Number.isInteger(serverPort) || serverPort < 1024 || serverPort > 65535) {
-  throw new Error(`Invalid CODE_YOUTUBE_BG_PORT: ${serverPortText}`);
-}
-
-function patchWorkbenchHtmlForIframe() {
-  if (!fs.existsSync(htmlBackupPath)) {
-    fs.copyFileSync(htmlPath, htmlBackupPath);
-  }
-
-  let html = fs.readFileSync(htmlBackupPath, 'utf8');
-  html = html.replace(
-    /frame-src\s+([\s\S]*?)\s+;/,
-    `frame-src
-\t\t\t\t\t'self'
-\t\t\t\t\tvscode-webview:
-\t\t\t\t\thttp://127.0.0.1:*
-\t\t\t\t\thttp://localhost:*
-\t\t\t\t\thttps://www.youtube.com
-\t\t\t\t\thttps://www.youtube-nocookie.com
-\t\t\t\t;`
-  );
-  html = html.replace(
-    /connect-src\s+([\s\S]*?)\s+;/,
-    `connect-src
-\t\t\t\t\t'self'
-\t\t\t\t\thttps:
-\t\t\t\t\tws:
-\t\t\t\t\thttp://127.0.0.1:*
-\t\t\t\t\thttp://localhost:*
-\t\t\t\t;`
-  );
-  const previous = fs.existsSync(htmlPath) ? fs.readFileSync(htmlPath, 'utf8') : '';
-  if (previous !== html) {
-    fs.writeFileSync(htmlPath, html, 'utf8');
-    return true;
-  }
-  return false;
-}
-
-const { generatePatch } = require(path.join(extRoot, 'out/patchGenerator.js'));
-const { applyPatch } = require(path.join(extRoot, 'out/patchFile.js'));
-
-const htmlChanged = patchWorkbenchHtmlForIframe();
-const mediaToken = `${Date.now()}-${videoId}`;
-
-fs.mkdirSync(path.dirname(liveStatePath), { recursive: true });
-fs.writeFileSync(liveStatePath, JSON.stringify({
-  type: 'youtube-iframe',
-  input,
-  videoId,
-  mediaToken,
-  muted,
-  volume,
-  opacity,
-  serverPort,
-  updatedAt: new Date().toISOString(),
-}, null, 2) + '\n');
-
-fs.mkdirSync(path.dirname(statePath), { recursive: true });
-fs.writeFileSync(statePath, JSON.stringify({
-  type: 'youtube-iframe',
-  input,
-  videoId,
-  mediaToken,
-  opacity,
-  muted,
-  volume,
-  liveStatePath,
-  stateUrl: `http://127.0.0.1:${serverPort}/state.json`,
-  updatedAt: new Date().toISOString(),
-}, null, 2) + '\n');
-
-if (!fs.existsSync(backupPath)) {
-  fs.copyFileSync(jsPath, backupPath);
-}
-
-const currentJs = fs.readFileSync(jsPath, 'utf8');
-const runtimeInstalled = currentJs.includes(runtimeMarker);
-
-if (runtimeInstalled) {
-  console.log('needs_restart=0');
-  console.log(`html_changed=${htmlChanged ? 1 : 0}`);
-  console.log(`YouTube iframe background updated for ${videoId}`);
-  process.exit(0);
-}
-
-const original = fs.readFileSync(backupPath, 'utf8');
-const patch = generatePatch({
-  videos: [],
-  transitions: [],
-  opacity,
-  switchInterval: 0,
-  theme: 'glass',
-  extensionPath: extRoot,
-});
-
-const stateUrl = `http://127.0.0.1:${serverPort}/state.json`;
-const runtimePatch = `(function(){
-var RUNTIME=${JSON.stringify(runtimeMarker)};
-var stateUrl=${JSON.stringify(stateUrl)};
-var currentKey='';
-var wrap=null;
-var frame=null;
-var pendingFrame=null;
-var pendingKey='';
-var style=null;
-function clamp(n,min,max){return Math.min(max,Math.max(min,n));}
-function ensure(){
-  if(!style){
-    style=document.createElement('style');
-    style.id='code-youtube-bg-live-css';
-    document.head.appendChild(style);
-  }
-  if(!wrap){
-    wrap=document.createElement('div');
-    wrap.id='vscbg-wrap';
-    wrap.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;z-index:0;pointer-events:none;overflow:hidden;background:#000;';
-    document.body.insertBefore(wrap,document.body.firstChild);
-  }
-}
-function playerSrc(videoId,wantMuted,vol,key){
-  var params=new URLSearchParams({
-    v:videoId,
-    token:key,
-    muted:wantMuted?'1':'0',
-    volume:String(clamp(vol,0,1)),
-    _:String(Date.now())
-  });
-  return 'http://127.0.0.1:'+${JSON.stringify(serverPort)}+'/?'+params.toString();
-}
-function postCommand(f,func,args){
-  try{
-    if(f&&f.contentWindow){
-      f.contentWindow.postMessage(JSON.stringify({event:'command',func:func,args:args||[]}), '*');
-    }
-  }catch(e){}
-}
-function applyFrameSettings(f,wantMuted,vol){
-  if(!f)return;
-  postCommand(f,'setVolume',[Math.round(clamp(vol,0,1)*100)]);
-  if(wantMuted)postCommand(f,'mute',[]);
-  else postCommand(f,'unMute',[]);
-  postCommand(f,'playVideo',[]);
-}
-function cleanupFrame(f){
-  if(!f)return;
-  try{f.src='about:blank';}catch(e){}
-  try{f.remove();}catch(e){}
-}
-function makeFrame(src,key){
-  var f=document.createElement('iframe');
-  f.className='code-youtube-bg-live-frame';
-  f.dataset.key=key;
-  f.src=src;
-  f.title='YouTube background '+key;
-  f.allow='autoplay; encrypted-media; picture-in-picture; fullscreen';
-  f.setAttribute('allowfullscreen','');
-  f.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
-  f.style.cssText='position:absolute;top:50%;left:50%;width:177.78vh;height:100vh;min-width:100vw;min-height:56.25vw;transform:translate(-50%,-50%);border:0;pointer-events:none;background:#000;opacity:1;transition:opacity .18s linear;';
-  return f;
-}
-function promote(f,wantMuted,vol){
-  if(!f)return;
-  var key=f.dataset.key||'';
-  if(key!==pendingKey&&key!==currentKey)return;
-  if(frame&&frame!==f){
-    var old=frame;
-    old.style.opacity='0';
-    setTimeout(function(){cleanupFrame(old);},220);
-  }
-  if(pendingFrame&&pendingFrame!==f){
-    cleanupFrame(pendingFrame);
-  }
-  frame=f;
-  frame.id='code-youtube-bg-live-frame';
-  frame.style.opacity='1';
-  currentKey=key;
-  pendingFrame=null;
-  pendingKey='';
-  applyFrameSettings(frame,wantMuted,vol);
-}
-function loadNextFrame(videoId,key,wantMuted,vol){
-  if(currentKey===key&&frame){
-    applyFrameSettings(frame,wantMuted,vol);
-    return;
-  }
-  if(pendingKey===key&&pendingFrame){
-    applyFrameSettings(pendingFrame,wantMuted,vol);
-    return;
-  }
-  if(pendingFrame){
-    cleanupFrame(pendingFrame);
-  }
-  var src=playerSrc(videoId,wantMuted,vol,key);
-  var next=makeFrame(src,key);
-  pendingFrame=next;
-  pendingKey=key;
-  next.style.opacity=frame?'0':'1';
-  next.addEventListener('load',function(){
-    applyFrameSettings(next,wantMuted,vol);
-    setTimeout(function(){promote(next,wantMuted,vol);},250);
-  },{once:true});
-  wrap.appendChild(next);
-  setTimeout(function(){applyFrameSettings(next,wantMuted,vol);},600);
-  setTimeout(function(){promote(next,wantMuted,vol);},1500);
-}
-function liveCss(op){
-  return [
-    'html,body{background:#000!important}',
-    'body{position:relative!important}',
-    '#vscbg-wrap{z-index:0!important}',
-    '.monaco-workbench{position:relative!important;z-index:1!important;opacity:'+op+'!important}'
-  ].join('');
-}
-function applyState(state){
-  if(!state||!state.videoId)return;
-  ensure();
-  var op=Number(state.opacity);
-  if(!isFinite(op))op=${JSON.stringify(opacity)};
-  op=clamp(op,0,1);
-  style.textContent=liveCss(op);
-  var vol=Number(state.volume);
-  if(!isFinite(vol))vol=${JSON.stringify(volume)};
-  var wantMuted=state.muted!==false;
-  var key=String(state.mediaToken||state.updatedAt||state.videoId);
-  loadNextFrame(state.videoId,key,wantMuted,vol);
-}
-function poll(){
-  fetch(stateUrl+'?_='+Date.now(),{cache:'no-store'})
-    .then(function(r){return r.ok?r.json():null;})
-    .then(applyState)
-    .catch(function(){});
-}
-function kick(){
-  if(frame)postCommand(frame,'playVideo',[]);
-  if(pendingFrame)postCommand(pendingFrame,'playVideo',[]);
-}
-function start(){
-  poll();
-  setTimeout(poll,250);
-  setTimeout(poll,1000);
-  setInterval(poll,1000);
-  setInterval(function(){
-    fetch(stateUrl+'?_='+Date.now(),{cache:'no-store'})
-      .then(function(r){return r.ok?r.json():null;})
-      .then(function(s){
-        if(!s)return;
-        var vol=Number(s.volume);
-        if(!isFinite(vol))vol=${JSON.stringify(volume)};
-        var wantMuted=s.muted!==false;
-        applyFrameSettings(frame,wantMuted,vol);
-      })
-      .catch(function(){});
-  },3000);
-  document.addEventListener('visibilitychange',poll);
-  window.addEventListener('focus',poll);
-  window.addEventListener('pointerdown',kick,true);
-  window.addEventListener('keydown',kick,true);
-}
-if(document.body){start();}
-else{document.addEventListener('DOMContentLoaded',start);}
-})();`;
-
-fs.writeFileSync(jsPath, applyPatch(original, `${patch}\n${runtimePatch}`), 'utf8');
-
-console.log('needs_restart=1');
-console.log(`html_changed=${htmlChanged ? 1 : 0}`);
-console.log(`YouTube iframe live runtime installed for ${videoId}`);
-NODE
-)"
-
-  printf '%s\n' "$patch_result" | sed '/^needs_restart=/d;/^html_changed=/d'
-  needs_restart="$(printf '%s\n' "$patch_result" | sed -n 's/^needs_restart=//p' | tail -n 1)"
-  html_changed="$(printf '%s\n' "$patch_result" | sed -n 's/^html_changed=//p' | tail -n 1)"
-
-  start_bg_server
-
-  if [[ "$needs_restart" == "1" || "$html_changed" == "1" ]]; then
-    codesign --force --deep --sign - "$app" >/dev/null
-  fi
-
-  app_running=0
-  if is_code_video_bg_running; then
-    app_running=1
-  fi
-
-  if [[ "$needs_restart" == "1" || "$html_changed" == "1" ]]; then
-    stop_code_video_bg
-    app_running=0
-    start_bg_server
-  fi
-
-  if [[ "$app_running" == "0" ]]; then
-    open -na "$app" --args \
-      --user-data-dir "$user_data" \
-      --extensions-dir "$extensions_dir" \
-      --autoplay-policy=no-user-gesture-required \
-      --password-store=basic \
-      --use-mock-keychain \
-      --new-window "$HOME"
-    sleep 3
-    echo "Code Video BG launched with live YouTube iframe background: $video_url"
-  else
-    echo "Code Video BG live YouTube iframe background updated without restart: $video_url"
-  fi
-
-  activate_code_video_bg
-
-  exit 0
-  fi
-
-  if [[ ! -x "$ytdlp_bin" ]]; then
-    echo "yt-dlp not found in PATH" >&2
-    exit 1
-  fi
-
-  echo "Resolving temporary high-resolution YouTube stream URL for $video_id"
-  mux_container="mp4"
-  mux_source_mode="split"
-  if [[ "$audio_enabled" == "1" && "$audio_engine" == "inline" && -x "$ffmpeg_bin" ]]; then
-    mux_source_mode="single"
-    video_format_selector='best[protocol=m3u8_native][vcodec!=none][acodec!=none]/best[protocol^=m3u8][vcodec!=none][acodec!=none]/best[protocol=https][vcodec!=none][acodec!=none]/best[protocol^=http][vcodec!=none][acodec!=none]/best'
-    audio_format_selector='ba[ext=m4a][protocol=https]/ba[ext=m4a][protocol^=http]/ba[protocol=https]/ba[protocol^=http]/bestaudio[protocol^=http]/bestaudio/best'
-  elif [[ "$audio_enabled" == "1" && "$audio_engine" == "mpv" ]]; then
-    mux_source_mode="external"
-    video_format_selector='bv*[ext=mp4][vcodec^=avc1][protocol=https]/bv*[ext=mp4][vcodec^=avc1][protocol^=http]/bv*[ext=mp4][protocol=https]/bv*[ext=mp4][protocol^=http]/bestvideo[ext=mp4][protocol^=http]/best[ext=mp4][protocol^=http]/best'
-    audio_format_selector='ba[ext=m4a][protocol=https]/ba[ext=m4a][protocol^=http]/ba[protocol=https]/ba[protocol^=http]/bestaudio[protocol^=http]/bestaudio/best'
-  else
-    video_format_selector='bv*[protocol=https][vcodec!=none]/bv*[protocol^=http][vcodec!=none]/bestvideo[protocol^=http]/best[protocol^=http]/best'
-    audio_format_selector='ba[ext=m4a][protocol=https]/ba[ext=m4a][protocol^=http]/ba[protocol=https]/ba[protocol^=http]/bestaudio[protocol^=http]/bestaudio/best'
-  fi
-  ytdlp_stream_err="$user_data/yt-dlp-stream.err"
-
-  resolve_ytdlp_url() {
-    local selector="$1"
-    local label="$2"
-    local output=""
-    local ytdlp_args=(
-      --no-playlist
-      --quiet
-      --no-warnings
-      -f "$selector"
-      -g
-      "$video_url"
-    )
-
-    if ! output="$("$ytdlp_bin" "${ytdlp_args[@]}" 2>"$ytdlp_stream_err")"; then
-      local cookies_browser="${CODE_YOUTUBE_BG_COOKIES_FROM_BROWSER:-chrome}"
-      if [[ -n "$cookies_browser" && "$cookies_browser" != "0" ]]; then
-        echo "yt-dlp needs browser cookies for $label; retrying with --cookies-from-browser $cookies_browser" >&2
-        if ! output="$("$ytdlp_bin" --cookies-from-browser "$cookies_browser" "${ytdlp_args[@]}" 2>>"$ytdlp_stream_err")"; then
-          cat "$ytdlp_stream_err" >&2 || true
-          exit 1
-        fi
-      else
-        cat "$ytdlp_stream_err" >&2 || true
-        exit 1
-      fi
-    fi
-
-    printf '%s\n' "$output" | sed -n '1p'
-  }
-
-  stream_url="$(resolve_ytdlp_url "$video_format_selector" "video")"
-  audio_stream_url=""
-  if [[ "$audio_enabled" == "1" && "$mux_source_mode" != "single" ]]; then
-    audio_stream_url="$(resolve_ytdlp_url "$audio_format_selector" "audio")"
-  fi
-
-  if [[ "$stream_url" != https://* ]]; then
-    echo "Failed to resolve a usable HTTPS stream URL" >&2
-    exit 1
-  fi
-
-  muxed_audio_enabled=0
-  if [[ "$audio_enabled" == "1" && "$audio_engine" == "inline" ]]; then
-    if [[ "$mux_source_mode" == "single" && -x "$ffmpeg_bin" ]]; then
-      muxed_audio_enabled=1
-    elif [[ -n "$audio_stream_url" && -x "$ffmpeg_bin" ]]; then
-      muxed_audio_enabled=1
-    else
-      echo "ffmpeg not found; using external mpv audio fallback, which can drift out of sync" >&2
-    fi
-  fi
-
-  if [[ -f "$live_state_path" ]]; then
-    cp -p "$live_state_path" "$previous_live_state_path"
-  else
-    rm -f "$previous_live_state_path"
-  fi
-
-  patch_result="$("$node_bin" - "$input" "$opacity" "$audio_enabled" "$volume" "$audio_delay" "$server_port" "$ext_root" "$js_path" "$backup_path" "$html_path" "$html_backup_path" "$state_path" "$live_state_path" "$stream_url" "$audio_stream_url" "$video_id" "$runtime_marker" "$muxed_audio_enabled" "$mux_container" "$mux_source_mode" "$audio_engine" <<'NODE'
-const fs = require('fs');
-const path = require('path');
-
-const [input, opacityText, audioEnabledText, volumeText, audioDelayText, serverPortText, extRoot, jsPath, backupPath, htmlPath, htmlBackupPath, statePath, liveStatePath, streamUrl, audioStreamUrl, videoId, runtimeMarker, muxedAudioText, muxContainerText, muxSourceModeText, audioEngineText] = process.argv.slice(2);
-const opacity = Number(opacityText);
-const muted = audioEnabledText !== '1';
-const volume = Number(volumeText);
-const audioDelay = Number(audioDelayText);
-const serverPort = Number(serverPortText);
-const muxedAudio = muxedAudioText === '1';
-const muxContainer = muxContainerText === 'webm' ? 'webm' : 'mp4';
-const muxSourceMode = muxSourceModeText === 'single' ? 'single' : 'split';
-const muxContentType = muxContainer === 'webm' ? 'video/webm' : 'video/mp4';
-const audioEngine = audioEngineText === 'inline' ? 'inline' : 'mpv';
-const inlineAudio = muxedAudio && audioEngine === 'inline';
-const audioSync = muted ? 'muted' : (audioEngine === 'mpv' ? 'server-mpv' : 'inline');
-
-if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) {
-  throw new Error(`Invalid CODE_YOUTUBE_BG_OPACITY: ${opacityText}`);
-}
-
-if (!Number.isFinite(volume) || volume < 0 || volume > 1) {
-  throw new Error(`Invalid volume: ${volumeText}`);
-}
-
-if (!Number.isFinite(audioDelay) || audioDelay < -10 || audioDelay > 10) {
-  throw new Error(`Invalid audio delay: ${audioDelayText}`);
-}
-
-if (!Number.isInteger(serverPort) || serverPort < 1024 || serverPort > 65535) {
-  throw new Error(`Invalid CODE_YOUTUBE_BG_PORT: ${serverPortText}`);
-}
-
-function patchWorkbenchHtmlForStream() {
-  if (!fs.existsSync(htmlBackupPath)) {
-    fs.copyFileSync(htmlPath, htmlBackupPath);
-  }
-
-  let html = fs.readFileSync(htmlBackupPath, 'utf8');
-  html = html.replace(
-    /media-src\s+([\s\S]*?)\s+;/,
-    `media-src
-\t\t\t\t\t'self'
-\t\t\t\t\thttps:
-\t\t\t\t\thttp://127.0.0.1:*
-\t\t\t\t\thttp://localhost:*
-\t\t\t\t\tblob:
-\t\t\t\t\tdata:
-\t\t\t\t;`
-  );
-  html = html.replace(
-    /connect-src\s+([\s\S]*?)\s+;/,
-    `connect-src
-\t\t\t\t\t'self'
-\t\t\t\t\thttps:
-\t\t\t\t\tws:
-\t\t\t\t\thttp://127.0.0.1:*
-\t\t\t\t\thttp://localhost:*
-\t\t\t\t;`
-  );
-  const previous = fs.existsSync(htmlPath) ? fs.readFileSync(htmlPath, 'utf8') : '';
-  if (previous !== html) {
-    fs.writeFileSync(htmlPath, html, 'utf8');
-    return true;
-  }
-  return false;
-}
-
-const { generatePatch } = require(path.join(extRoot, 'out/patchGenerator.js'));
-const { applyPatch } = require(path.join(extRoot, 'out/patchFile.js'));
-
-const htmlChanged = patchWorkbenchHtmlForStream();
-const mediaToken = `${Date.now()}-${videoId}`;
-const proxySrc = `http://127.0.0.1:${serverPort}/media?v=${encodeURIComponent(videoId)}&token=${encodeURIComponent(mediaToken)}`;
-const proxyAudioSrc = `http://127.0.0.1:${serverPort}/audio?v=${encodeURIComponent(videoId)}&token=${encodeURIComponent(mediaToken)}`;
-const muxedProxySrc = muxedAudio
-  ? `http://127.0.0.1:${serverPort}/mux?v=${encodeURIComponent(videoId)}&token=${encodeURIComponent(mediaToken)}`
-  : null;
-const audioMode = muted ? 'muted' : (muxedAudio ? 'muxed' : 'external');
-
-fs.mkdirSync(path.dirname(liveStatePath), { recursive: true });
-fs.writeFileSync(liveStatePath, JSON.stringify({
-  type: 'stream',
-  input,
-  videoId,
-  src: streamUrl,
-  muxInputSrc: streamUrl,
-  audioSrc: audioStreamUrl || null,
-  proxySrc,
-  proxyAudioSrc,
-  muxedProxySrc,
-  muxContainer,
-  muxSourceMode,
-  muxContentType,
-  audioEngine,
-  inlineAudio,
-  audioSync,
-  audioMode,
-  mediaToken,
-  muted,
-  volume,
-  audioDelay,
-  opacity,
-  serverPort,
-  updatedAt: new Date().toISOString(),
-}, null, 2) + '\n');
-
-fs.mkdirSync(path.dirname(statePath), { recursive: true });
-fs.writeFileSync(statePath, JSON.stringify({
-  type: 'stream',
-  input,
-  videoId,
-  opacity,
-  muted,
-  volume,
-  audioDelay,
-  liveStatePath,
-  stateUrl: `http://127.0.0.1:${serverPort}/state.json`,
-  proxyUrl: `http://127.0.0.1:${serverPort}/media`,
-  audioProxyUrl: `http://127.0.0.1:${serverPort}/audio`,
-  muxedProxyUrl: `http://127.0.0.1:${serverPort}/mux`,
-  muxContainer,
-  muxSourceMode,
-  muxContentType,
-  audioEngine,
-  inlineAudio,
-  audioSync,
-  audioMode,
-  streamUrlHost: new URL(streamUrl).hostname,
-  audioStreamUrlHost: audioStreamUrl ? new URL(audioStreamUrl).hostname : null,
-  streamUrlExpires: new URL(streamUrl).searchParams.get('expire'),
-  updatedAt: new Date().toISOString(),
-}, null, 2) + '\n');
-
-if (!fs.existsSync(backupPath)) {
-  fs.copyFileSync(jsPath, backupPath);
-}
-
-const currentJs = fs.readFileSync(jsPath, 'utf8');
-const runtimeInstalled = currentJs.includes(runtimeMarker);
-
-if (runtimeInstalled) {
-  console.log(`needs_restart=0`);
-  console.log(`html_changed=${htmlChanged ? 1 : 0}`);
-  console.log(`Streaming video background updated for ${videoId}`);
-  process.exit(0);
-}
-
-const original = fs.readFileSync(backupPath, 'utf8');
-const patch = generatePatch({
-  videos: [],
-  transitions: [],
-  opacity,
-  switchInterval: 0,
-  theme: 'glass',
-  extensionPath: extRoot,
-});
-
-const stateUrl = `http://127.0.0.1:${serverPort}/state.json`;
-const runtimePatch = `(function(){
-var RUNTIME=${JSON.stringify(runtimeMarker)};
-var stateUrl=${JSON.stringify(stateUrl)};
-var debugUrl=stateUrl.replace(/\\/state\\.json(?:\\?.*)?$/,'/debug');
-var syncUrl=stateUrl.replace(/\\/state\\.json(?:\\?.*)?$/,'/sync.json');
-var currentSrc='';
-var currentKey='';
-var wrap=null;
-var video=null;
-var style=null;
-var desiredMuted=true;
-var desiredVolume=0;
-var retryTimer=null;
-var playError='';
-var lastState=null;
-var lastSyncTargetIssuedAt=0;
-var startAtZeroKey='';
-function clamp(n,min,max){return Math.min(max,Math.max(min,n));}
-function cacheBust(src){
-  if(!src)return src;
-  return src+(src.indexOf('?')===-1?'?':'&')+'_retry='+Date.now();
-}
-function ensure(){
-  if(!style){
-    style=document.createElement('style');
-    style.id='code-youtube-bg-live-css';
-    document.head.appendChild(style);
-  }
-  if(!wrap){
-    wrap=document.createElement('div');
-    wrap.id='vscbg-wrap';
-    wrap.style.cssText='position:fixed;inset:0;width:100vw;height:100vh;z-index:0;pointer-events:none;overflow:hidden;background:#000;';
-    document.body.insertBefore(wrap,document.body.firstChild);
-  }
-  if(!video){
-    video=document.createElement('video');
-    video.id='code-youtube-bg-live-video';
-    video.className='code-youtube-bg-live-video';
-    video.autoplay=true;
-    video.loop=true;
-    video.controls=false;
-    video.crossOrigin='anonymous';
-    video.setAttribute('playsinline','');
-    video.setAttribute('preload','auto');
-    video.style.cssText='position:absolute;inset:0;width:100%;height:100%;object-fit:contain;object-position:center;background:#000;opacity:1;';
-    video.addEventListener('loadedmetadata',function(){forceStartAtZero('start-zero-metadata');kickVideo();});
-    video.addEventListener('loadeddata',function(){forceStartAtZero('start-zero-data');kickVideo();});
-    video.addEventListener('canplay',function(){forceStartAtZero('start-zero-canplay');kickVideo();});
-    video.addEventListener('playing',function(){
-      if(!desiredMuted){
-        video.muted=false;
-        video.volume=desiredVolume;
-      }
-      playError='';
-      reportDebug('playing');
-    });
-    video.addEventListener('stalled',function(){setTimeout(kickVideo,400);});
-    video.addEventListener('waiting',function(){setTimeout(kickVideo,400);});
-    video.addEventListener('ended',function(){reloadCurrentVideo(100);});
-    video.addEventListener('error',function(){
-      playError=video.error?String(video.error.code||video.error.message||'media error'):'media error';
-      if(window.console&&console.warn)console.warn('[code-youtube-bg] video error',video.error,currentSrc);
-      reportDebug('error');
-      reloadCurrentVideo(1200);
-    });
-    wrap.appendChild(video);
-  }
-}
-function bufferedText(){
-  if(!video||!video.buffered)return '';
-  var out=[];
-  try{
-    for(var i=0;i<video.buffered.length;i++){
-      out.push(video.buffered.start(i).toFixed(2)+'-'+video.buffered.end(i).toFixed(2));
-    }
-  }catch(e){}
-  return out.join(',');
-}
-function reportDebug(reason){
-  if(!video)return;
-  var body={
-    runtime:RUNTIME,
-    reason:reason||'tick',
-    key:currentKey,
-    src:currentSrc,
-    videoId:lastState&&lastState.videoId||'',
-    audioMode:lastState&&lastState.audioMode||'',
-    inlineAudio:lastState&&lastState.inlineAudio===true,
-    paused:video.paused,
-    ended:video.ended,
-    muted:video.muted,
-    volume:video.volume,
-    readyState:video.readyState,
-    networkState:video.networkState,
-    currentTime:video.currentTime,
-    duration:isFinite(video.duration)?video.duration:null,
-    playbackRate:video.playbackRate,
-    videoWidth:video.videoWidth,
-    videoHeight:video.videoHeight,
-    buffered:bufferedText(),
-    audioTracks:video.audioTracks?video.audioTracks.length:null,
-    webkitAudioDecodedByteCount:typeof video.webkitAudioDecodedByteCount==='number'?video.webkitAudioDecodedByteCount:null,
-    webkitVideoDecodedByteCount:typeof video.webkitVideoDecodedByteCount==='number'?video.webkitVideoDecodedByteCount:null,
-    error:video.error?{code:video.error.code,message:video.error.message||''}:null,
-    playError:playError
-  };
-  try{
-    fetch(debugUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),keepalive:true}).catch(function(){});
-  }catch(e){}
-}
-function applyVideoSettings(wantMuted,vol){
-  if(!video)return;
-  var nextVol=Number(vol);
-  if(!isFinite(nextVol))nextVol=0;
-  desiredMuted=!!wantMuted;
-  desiredVolume=clamp(nextVol,0,1);
-  video.volume=desiredMuted?0:desiredVolume;
-  video.dataset.wantMuted=desiredMuted?'1':'0';
-  video.muted=desiredMuted;
-  video.loop=true;
-  video.autoplay=true;
-}
-function forceStartAtZero(reason){
-  if(!video||!currentKey||startAtZeroKey!==currentKey||video.readyState<1)return;
-  try{
-    video.currentTime=0;
-    startAtZeroKey='';
-    reportDebug(reason||'start-zero');
-  }catch(e){}
-}
-function kickVideo(){
-  if(!video)return;
-  var wantsSound=!desiredMuted&&desiredVolume>0;
-  var startMuted=wantsSound&&video.paused;
-  video.muted=startMuted?true:desiredMuted;
-  video.volume=startMuted?0:(desiredMuted?0:desiredVolume);
-  var played;
-  try{played=video.play();}catch(e){playError=String(e&&e.message||e);reportDebug('play-throw');return;}
-  if(played&&typeof played.then==='function'){
-    played.then(function(){
-      if(wantsSound){
-        video.muted=false;
-        video.volume=desiredVolume;
-      }
-      playError='';
-      reportDebug('play-ok');
-    }).catch(function(e){playError=String(e&&e.message||e);reportDebug('play-rejected');});
-  }
-}
-function kick(){
-  kickVideo();
-}
-function setVideoRate(rate){
-  if(!video)return;
-  var next=Number(rate);
-  if(!isFinite(next))next=1;
-  next=clamp(next,0.96,1.04);
-  if(Math.abs(next-1)<0.003)next=1;
-  try{
-    if(Math.abs(video.playbackRate-next)>0.002){
-      video.playbackRate=next;
-    }
-  }catch(e){}
-}
-function applySync(payload){
-  if(!video||!lastState||lastState.audioSync!=='server-mpv'){
-    setVideoRate(1);
-    return;
-  }
-  var audio=payload&&payload.audio||{};
-  if(!audio.running){
-    setVideoRate(1);
-    return;
-  }
-  var expectedMediaKey=String(lastState.mediaToken||lastState.updatedAt||lastState.videoId||'');
-  if(audio.mediaKey&&String(audio.mediaKey)!==expectedMediaKey){
-    setVideoRate(1);
-    return;
-  }
-  if(startAtZeroKey===currentKey){
-    forceStartAtZero('start-zero-sync');
-    setVideoRate(1);
-    return;
-  }
-  var issued=Number(audio.targetIssuedAt)||0;
-  var target=Number(audio.targetVideoTime);
-  if(issued&&issued!==lastSyncTargetIssuedAt&&isFinite(target)&&video.readyState>=1){
-    lastSyncTargetIssuedAt=issued;
-    if(Math.abs(video.currentTime-target)>0.9){
-      try{
-        video.currentTime=Math.max(0,target);
-        reportDebug('sync-video-seek');
-      }catch(e){}
-    }
-  }
-  setVideoRate(audio.recommendedVideoRate);
-}
-function pollSync(){
-  fetch(syncUrl+'?_='+Date.now(),{cache:'no-store'})
-    .then(function(r){return r.ok?r.json():null;})
-    .then(applySync)
-    .catch(function(){});
-}
-function reloadCurrentVideo(delay){
-  if(!video||!currentSrc)return;
-  if(retryTimer)clearTimeout(retryTimer);
-  retryTimer=setTimeout(function(){
-    if(!video||!currentSrc)return;
-    applyVideoSettings(desiredMuted,desiredVolume);
-    try{video.pause();}catch(e){}
-    try{video.removeAttribute('src');video.load();}catch(e){}
-    video.src=cacheBust(currentSrc);
-    try{video.load();}catch(e){}
-    kickVideo();
-    setTimeout(kickVideo,500);
-  },delay||0);
-}
-function loadNextVideo(nextSrc,nextKey,wantMuted,vol){
-  nextKey=nextKey||nextSrc;
-  ensure();
-  applyVideoSettings(wantMuted,vol);
-  if(currentKey===nextKey&&currentSrc===nextSrc){
-    kickVideo();
-    return;
-  }
-  setVideoRate(1);
-  lastSyncTargetIssuedAt=0;
-  currentKey=nextKey;
-  currentSrc=nextSrc;
-  startAtZeroKey=nextKey;
-  video.muted=desiredMuted;
-  video.volume=desiredMuted?0:desiredVolume;
-  try{video.pause();}catch(e){}
-  try{video.removeAttribute('src');video.load();}catch(e){}
-  video.src=nextSrc;
-  try{video.load();}catch(e){}
-  forceStartAtZero('start-zero-load');
-  setTimeout(function(){forceStartAtZero('start-zero-50');},50);
-  setTimeout(function(){forceStartAtZero('start-zero-250');},250);
-  setTimeout(function(){forceStartAtZero('start-zero-750');},750);
-  kickVideo();
-  setTimeout(kickVideo,300);
-  setTimeout(kickVideo,900);
-  setTimeout(kickVideo,1800);
-}
-function liveCss(op){
-  return [
-    'html,body{background:#000!important}',
-    'body{position:relative!important}',
-    '#vscbg-wrap{z-index:0!important}',
-    '.monaco-workbench{position:relative!important;z-index:1!important;opacity:'+op+'!important}'
-  ].join('');
-}
-function applyState(state){
-  if(!state||!state.src)return;
-  lastState=state;
-  ensure();
-  var useMux=state.audioMode==='muxed'&&!!state.muxedProxySrc;
-  var inlineAudio=state.inlineAudio===true;
-  var nextSrc=useMux?state.muxedProxySrc:(state.proxySrc||state.src);
-  var nextKey=String(state.mediaToken||state.updatedAt||nextSrc);
-  if(useMux)nextKey='muxed:'+nextKey;
-  var op=Number(state.opacity);
-  var vol=Number(state.volume);
-  if(!isFinite(vol))vol=${JSON.stringify(volume)};
-  if(!isFinite(op))op=${JSON.stringify(opacity)};
-  op=clamp(op,0,1);
-  style.textContent=liveCss(op);
-  loadNextVideo(nextSrc,nextKey,!useMux||!inlineAudio,vol);
-  reportDebug('state');
-}
-function poll(){
-  fetch(stateUrl+'?_='+Date.now(),{cache:'no-store'})
-    .then(function(r){return r.ok?r.json():null;})
-    .then(applyState)
-    .catch(function(){});
-}
-function start(){
-  poll();
-  setTimeout(poll,250);
-  setTimeout(poll,1000);
-  setInterval(poll,1000);
-  setInterval(pollSync,700);
-  setInterval(kickVideo,1000);
-  setInterval(function(){reportDebug('tick');},1500);
-  document.addEventListener('visibilitychange',poll);
-  window.addEventListener('focus',poll);
-  window.addEventListener('pointerdown',kick,true);
-  window.addEventListener('keydown',kick,true);
-}
-if(document.body){start();}
-else{document.addEventListener('DOMContentLoaded',start);}
-})();`;
-
-fs.writeFileSync(jsPath, applyPatch(original, `${patch}\n${runtimePatch}`), 'utf8');
-
-console.log(`needs_restart=1`);
-console.log(`html_changed=${htmlChanged ? 1 : 0}`);
-console.log(`Streaming video live runtime installed for ${videoId}`);
-NODE
-)"
-
-  printf '%s\n' "$patch_result" | sed '/^needs_restart=/d;/^html_changed=/d'
-  needs_restart="$(printf '%s\n' "$patch_result" | sed -n 's/^needs_restart=//p' | tail -n 1)"
-  html_changed="$(printf '%s\n' "$patch_result" | sed -n 's/^html_changed=//p' | tail -n 1)"
-
-  start_bg_server
-  if [[ "$audio_enabled" == "1" && "$audio_engine" == "mpv" ]]; then
-    update_audio_player
-  else
-    stop_audio_player
-  fi
-
-  if [[ "$needs_restart" == "1" || "$html_changed" == "1" ]]; then
-    codesign --force --deep --sign - "$app" >/dev/null
-  fi
-
-  app_running=0
-  if is_code_video_bg_running; then
-    app_running=1
-  fi
-
-  if [[ "$needs_restart" == "1" || "$html_changed" == "1" ]]; then
-    stop_code_video_bg
-    app_running=0
-  fi
-
-  if [[ "$app_running" == "0" ]]; then
-    open -na "$app" --args \
-      --user-data-dir "$user_data" \
-      --extensions-dir "$extensions_dir" \
-      --autoplay-policy=no-user-gesture-required \
-      --password-store=basic \
-      --use-mock-keychain \
-      --new-window "$HOME"
-    sleep 3
-    echo "Code Video BG launched with streaming YouTube background: $video_url"
-  else
-    echo "Code Video BG live background updated without restart: $video_url"
-  fi
-
-  activate_code_video_bg
-
-  stream_token="$(current_stream_token)"
-  if ! verify_stream_not_rejected "$stream_token"; then
-    if restore_previous_live_state; then
-      echo "Playback check failed for $video_id; restored the previous background state." >&2
-    else
-      echo "Playback check failed for $video_id." >&2
-    fi
-    exit 1
-  fi
-
-  exit 0
-fi
-
-"$node_bin" - "$input" "$opacity" "$server_port" "$ext_root" "$js_path" "$backup_path" "$html_path" "$html_backup_path" "$state_path" <<'NODE'
-const fs = require('fs');
-const path = require('path');
-
-const [input, opacityText, serverPortText, extRoot, jsPath, backupPath, htmlPath, htmlBackupPath, statePath] = process.argv.slice(2);
-const opacity = Number(opacityText);
-const serverPort = Number(serverPortText);
-
-if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) {
-  throw new Error(`Invalid CODE_YOUTUBE_BG_OPACITY: ${opacityText}`);
-}
-
-if (!Number.isInteger(serverPort) || serverPort < 1024 || serverPort > 65535) {
-  throw new Error(`Invalid CODE_YOUTUBE_BG_PORT: ${serverPortText}`);
-}
-
-function extractVideoId(value) {
-  const trimmed = String(value || '').trim();
-  if (/^[A-Za-z0-9_-]{11}$/.test(trimmed)) return trimmed;
-
-  let parsed;
-  try {
-    parsed = new URL(trimmed);
-  } catch {
-    throw new Error(`Not a YouTube URL or 11-character video ID: ${trimmed}`);
-  }
-
-  const host = parsed.hostname.replace(/^www\./, '');
-  let id = null;
-
-  if (host === 'youtu.be') {
-    id = parsed.pathname.split('/').filter(Boolean)[0];
-  } else if (host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com')) {
-    id = parsed.searchParams.get('v');
-    if (!id) {
-      const parts = parsed.pathname.split('/').filter(Boolean);
-      const marker = parts.findIndex(part => ['embed', 'shorts', 'live'].includes(part));
-      if (marker !== -1) id = parts[marker + 1];
-    }
-  }
-
-  if (!id || !/^[A-Za-z0-9_-]{11}$/.test(id)) {
-    throw new Error(`Could not extract a YouTube video ID from: ${trimmed}`);
-  }
-
-  return id;
-}
-
-function youtubePatch(videoId) {
-  const src = `http://127.0.0.1:${serverPort}/?v=${videoId}&_=${Date.now()}`;
-  return `(function(){
-var videoId=${JSON.stringify(videoId)};
-var src=${JSON.stringify(src)};
-var existing=document.getElementById('code-youtube-bg');
-if(existing){ existing.remove(); }
-var css=document.getElementById('code-youtube-bg-css');
-if(!css){
-  css=document.createElement('style');
-  css.id='code-youtube-bg-css';
-  document.head.appendChild(css);
-}
-css.textContent='html,body{background:#000!important}.code-youtube-bg-wrap{position:fixed;inset:0;width:100vw;height:100vh;z-index:0;pointer-events:none;overflow:hidden;background:#000}.code-youtube-bg-frame{position:absolute;top:50%;left:50%;width:177.78vh;height:100vh;min-width:100vw;min-height:56.25vw;transform:translate(-50%,-50%);border:0;pointer-events:none;background:#000}.monaco-workbench{position:relative!important;z-index:1!important}';
-function postCommand(frame, func){
-  try {
-    if(frame && frame.contentWindow){
-      frame.contentWindow.postMessage(JSON.stringify({event:'command',func:func,args:[]}), '*');
-    }
-  } catch(e) {}
-}
-function init(){
-  var wrap=document.createElement('div');
-  wrap.id='code-youtube-bg';
-  wrap.className='code-youtube-bg-wrap';
-  var frame=document.createElement('iframe');
-  frame.className='code-youtube-bg-frame';
-  frame.src=src;
-  frame.title='YouTube background wrapper '+videoId;
-  frame.allow='autoplay; encrypted-media; picture-in-picture; fullscreen';
-  frame.setAttribute('allowfullscreen','');
-  frame.setAttribute('referrerpolicy','strict-origin-when-cross-origin');
-  wrap.appendChild(frame);
-  document.body.insertBefore(wrap, document.body.firstChild);
-  frame.addEventListener('load', function(){
-    postCommand(frame, 'mute');
-    postCommand(frame, 'playVideo');
-  });
-  setInterval(function(){
-    postCommand(frame, 'mute');
-    postCommand(frame, 'playVideo');
-  }, 3000);
-}
-if(document.body){ init(); }
-else{ document.addEventListener('DOMContentLoaded', init); }
-})();`;
-}
-
-function patchWorkbenchHtml() {
-  if (!fs.existsSync(htmlBackupPath)) {
-    fs.copyFileSync(htmlPath, htmlBackupPath);
-  }
-
-  let html = fs.readFileSync(htmlBackupPath, 'utf8');
-  html = html.replace(
-    /frame-src\s+([\s\S]*?)\s+;/,
-    `frame-src
-\t\t\t\t\t'self'
-\t\t\t\t\tvscode-webview:
-\t\t\t\t\thttp://127.0.0.1:*
-\t\t\t\t\thttp://localhost:*
-\t\t\t\t\thttps://www.youtube.com
-\t\t\t\t\thttps://www.youtube-nocookie.com
-\t\t\t\t;`
-  );
-  fs.writeFileSync(htmlPath, html, 'utf8');
-}
-
-const videoId = extractVideoId(input);
-const { generatePatch } = require(path.join(extRoot, 'out/patchGenerator.js'));
-const { applyPatch } = require(path.join(extRoot, 'out/patchFile.js'));
-
-patchWorkbenchHtml();
-
-if (!fs.existsSync(backupPath)) {
-  fs.copyFileSync(jsPath, backupPath);
-}
-
-const original = fs.readFileSync(backupPath, 'utf8');
-const basePatch = generatePatch({
-  videos: [],
-  transitions: [],
-  opacity,
-  switchInterval: 0,
-  theme: 'glass',
-  extensionPath: extRoot,
-});
-const patched = applyPatch(original, `${basePatch}\n${youtubePatch(videoId)}`);
-fs.writeFileSync(jsPath, patched, 'utf8');
-
-fs.mkdirSync(path.dirname(statePath), { recursive: true });
-fs.writeFileSync(statePath, JSON.stringify({
-  type: 'youtube',
-  input,
-  videoId,
-  opacity,
-  serverPort,
-  wrapperUrl: `http://127.0.0.1:${serverPort}/`,
-  updatedAt: new Date().toISOString(),
-}, null, 2) + '\n');
-
-console.log(`YouTube background set to ${videoId}`);
-NODE
-
-video_id="$("$node_bin" - "$state_path" <<'NODE'
-const fs = require('fs');
-const state = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-process.stdout.write(state.videoId);
-NODE
-)"
-
-launchctl remove "$server_label" 2>/dev/null || true
-sleep 0.3
-: > "$server_log_path"
-: > "$server_err_path"
-launchctl submit -l "$server_label" -o "$server_log_path" -e "$server_err_path" -- "$node_bin" "$server_path" "$video_id" "$server_port"
-
-server_ready=0
-for _ in {1..50}; do
-  health="$(curl -fsS "http://127.0.0.1:$server_port/health" 2>/dev/null || true)"
-  if [[ "$health" == *"\"videoId\":\"$video_id\""* ]]; then
-    server_ready=1
-    break
-  fi
-  sleep 0.1
-done
-
-if [[ "$server_ready" != "1" ]]; then
-  echo "Failed to start local YouTube wrapper server on port $server_port" >&2
-  tail -n 50 "$server_log_path" >&2 || true
-  tail -n 50 "$server_err_path" >&2 || true
-  exit 1
-fi
-
-codesign --force --deep --sign - "$app" >/dev/null
-
-open -na "$app" --args \
-  --user-data-dir "$user_data" \
-  --extensions-dir "$extensions_dir" \
-  --password-store=basic \
-  --use-mock-keychain \
-  --new-window "$HOME"
-
-sleep 3
 activate_code_video_bg
-
-echo "Code Video BG launched with YouTube background: $input"
