@@ -103,7 +103,7 @@ html_backup_path="$html_path.before-youtube-bg"
 runtime_js_path="$app/Contents/Resources/app/out/vs/code/electron-browser/workbench/code-youtube-bg-runtime.js"
 state_path="$user_data/youtube-bg.json"
 live_state_path="$user_data/live-state.json"
-runtime_marker="code-youtube-bg-embed-runtime.v3"
+runtime_marker="code-youtube-bg-embed-runtime.v4"
 server_log_path="$user_data/youtube-bg-server.log"
 server_err_path="$user_data/youtube-bg-server.err"
 server_pid_path="$user_data/youtube-bg-server.pid"
@@ -234,6 +234,67 @@ playlist_id="$("$node_bin" -e "process.stdout.write(JSON.parse(process.argv[1]).
 target_id="$("$node_bin" -e "process.stdout.write(JSON.parse(process.argv[1]).targetId)" "$target_meta")"
 target_url="$("$node_bin" -e "process.stdout.write(JSON.parse(process.argv[1]).url)" "$target_meta")"
 
+playlist_video_ids_json="[]"
+if [[ -n "$playlist_id" ]]; then
+  playlist_video_ids_json="$("$node_bin" - "$playlist_id" "$video_id" <<'NODE'
+const https = require('https');
+const playlistId = process.argv[2];
+const preferredVideoId = process.argv[3] || '';
+
+function isVideoId(value) {
+  return /^[A-Za-z0-9_-]{11}$/.test(value || '');
+}
+
+function fetchText(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, {
+      headers: {
+        'User-Agent': 'code-youtube-bg playlist feed resolver',
+      },
+    }, res => {
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        res.resume();
+        reject(new Error(`YouTube playlist feed returned HTTP ${res.statusCode}`));
+        return;
+      }
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => body += chunk);
+      res.on('end', () => resolve(body));
+    }).on('error', reject);
+  });
+}
+
+(async () => {
+  const xml = await fetchText(`https://www.youtube.com/feeds/videos.xml?playlist_id=${encodeURIComponent(playlistId)}`);
+  const ids = [];
+  for (const match of xml.matchAll(/<yt:videoId>([A-Za-z0-9_-]{11})<\/yt:videoId>/g)) {
+    if (!ids.includes(match[1])) ids.push(match[1]);
+  }
+  if (isVideoId(preferredVideoId) && !ids.includes(preferredVideoId)) {
+    ids.unshift(preferredVideoId);
+  }
+  process.stdout.write(JSON.stringify(ids));
+})().catch(error => {
+  if (isVideoId(preferredVideoId)) {
+    process.stdout.write(JSON.stringify([preferredVideoId]));
+    return;
+  }
+  console.error(String(error && error.message || error));
+  process.exit(1);
+});
+NODE
+)"
+  if [[ -z "$video_id" ]]; then
+    video_id="$("$node_bin" -e "const ids=JSON.parse(process.argv[1]); process.stdout.write(ids[0] || '')" "$playlist_video_ids_json")"
+  fi
+fi
+
+if [[ "$target_kind" == "playlist" && -z "$video_id" ]]; then
+  echo "Could not find any videos in playlist: $playlist_id" >&2
+  exit 1
+fi
+
 opacity="$("$node_bin" - "$opacity" <<'NODE'
 const value = Number(process.argv[2]);
 if (!Number.isFinite(value) || value < 0 || value > 1) {
@@ -295,7 +356,7 @@ health_ok() {
 const expected = process.argv[2];
 try {
   const health = JSON.parse(process.env.HEALTH_JSON || '{}');
-  process.exit(health.serverVersion === 18 && health.currentTargetId === expected ? 0 : 1);
+  process.exit(health.serverVersion === 19 && health.currentTargetId === expected ? 0 : 1);
 } catch {
   process.exit(1);
 }
@@ -417,15 +478,16 @@ NODE
   fi
 }
 
-patch_result="$("$node_bin" - "$input" "$opacity" "$audio_enabled" "$volume" "$server_port" "$js_path" "$backup_path" "$html_path" "$html_backup_path" "$runtime_js_path" "$state_path" "$live_state_path" "$target_kind" "$video_id" "$playlist_id" "$target_id" "$runtime_marker" <<'NODE'
+patch_result="$("$node_bin" - "$input" "$opacity" "$audio_enabled" "$volume" "$server_port" "$js_path" "$backup_path" "$html_path" "$html_backup_path" "$runtime_js_path" "$state_path" "$live_state_path" "$target_kind" "$video_id" "$playlist_id" "$target_id" "$playlist_video_ids_json" "$runtime_marker" <<'NODE'
 const fs = require('fs');
 const path = require('path');
 
-const [input, opacityText, audioEnabledText, volumeText, serverPortText, jsPath, backupPath, htmlPath, htmlBackupPath, runtimeJsPath, statePath, liveStatePath, targetKind, videoId, playlistId, targetId, runtimeMarker] = process.argv.slice(2);
+const [input, opacityText, audioEnabledText, volumeText, serverPortText, jsPath, backupPath, htmlPath, htmlBackupPath, runtimeJsPath, statePath, liveStatePath, targetKind, videoId, playlistId, targetId, playlistVideoIdsText, runtimeMarker] = process.argv.slice(2);
 const opacity = Number(opacityText);
 const muted = audioEnabledText !== '1';
 const volume = Number(volumeText);
 const serverPort = Number(serverPortText);
+const playlistVideoIds = JSON.parse(playlistVideoIdsText || '[]');
 
 if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) {
   throw new Error(`Invalid CODE_YOUTUBE_BG_OPACITY: ${opacityText}`);
@@ -531,6 +593,7 @@ function report(reason,state){
       kind:state&&state.kind||'',
       videoId:state&&state.videoId||'',
       playlistId:state&&state.playlistId||'',
+      playlistCount:state&&state.playlistVideoIds&&state.playlistVideoIds.length||0,
       muted:!(state&&state.muted===false),
       volume:state&&state.volume,
       receivedAt:new Date().toISOString()
@@ -615,6 +678,7 @@ const commonState = {
   input,
   videoId,
   playlistId,
+  playlistVideoIds,
   targetId,
   mediaToken,
   muted,

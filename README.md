@@ -96,6 +96,6 @@ Remove app support data too:
 - This is experimental and macOS-only.
 - This public build uses YouTube's embeddable iframe player. It does not download videos or resolve direct media stream URLs.
 - Videos must allow YouTube embedding. Age gates, sign-in checks, regional restrictions, and embedding-disabled videos are handled by YouTube and are not bypassed.
-- Playlist URLs are embedded through YouTube's playlist player. Playlist order and availability are controlled by YouTube.
+- Playlist URLs are resolved through YouTube's public Atom feed and played as a queue of regular YouTube iframe embeds. This avoids direct media URLs while working around playlist embeds that YouTube rejects.
 - VS Code updates can change internal files. Re-run `./install.sh --force` if the dedicated app breaks after an update.
 - Respect copyright and YouTube's terms when choosing videos.
