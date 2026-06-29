@@ -366,11 +366,49 @@ is_code_video_bg_running() {
   pgrep -f "$app/Contents/MacOS/Code" >/dev/null 2>&1
 }
 
+activate_code_video_bg_once() {
+  osascript 2>/dev/null <<'OSA' || true
+use framework "AppKit"
+use scripting additions
+
+set workspace to current application's NSWorkspace's sharedWorkspace()
+set apps to workspace's runningApplications()
+
+repeat with appRef in apps
+  set bid to appRef's bundleIdentifier()
+  if bid is not missing value and (bid as text) is "com.microsoft.VSCode" then
+    appRef's hide()
+  end if
+end repeat
+
+repeat with appRef in apps
+  set bid to appRef's bundleIdentifier()
+  if bid is not missing value and (bid as text) is "com.naoto.CodeVideoBG" then
+    appRef's activateWithOptions:3
+  end if
+end repeat
+delay 0.1
+
+set activeApp to workspace's frontmostApplication()
+set activeBundleId to ""
+if activeApp is not missing value then
+  set activeBid to activeApp's bundleIdentifier()
+  if activeBid is not missing value then set activeBundleId to activeBid as text
+end if
+return activeBundleId
+OSA
+}
+
 activate_code_video_bg() {
-  osascript \
-    -e 'ignoring application responses' \
-    -e 'tell application id "com.naoto.CodeVideoBG" to activate' \
-    -e 'end ignoring' >/dev/null 2>&1 || true
+  local front_bundle=""
+
+  for _ in {1..12}; do
+    front_bundle="$(activate_code_video_bg_once)"
+    if [[ "$front_bundle" == "com.naoto.CodeVideoBG" ]]; then
+      return 0
+    fi
+    sleep 0.5
+  done
 }
 
 normal_code_running() {
@@ -429,7 +467,8 @@ warn_if_normal_code_running() {
     cat >&2 <<'WARN'
 Note: regular Visual Studio Code is also running.
 code-youtube-bg only affects the dedicated Code Video BG.app window.
-To open the current folder in the background-enabled app, run:
+If regular VS Code takes focus, this command hides it and brings Code Video BG forward.
+To open a folder in the background-enabled app, run:
   code-youtube-bg --open . <youtube-url-or-video-id>
 WARN
   fi
@@ -1049,6 +1088,6 @@ if [[ ${#normalized_open_paths[@]} -gt 0 ]]; then
   done
 fi
 
-activate_code_video_bg
 unlock_youtube_audio
 warn_if_normal_code_running
+activate_code_video_bg
