@@ -51,6 +51,12 @@ Play a YouTube embed with audio:
 CODE_YOUTUBE_BG_OPACITY=0.90 code-youtube-bg --audio --volume 0.50 'https://www.youtube.com/watch?v=VIDEO_ID'
 ```
 
+Open the current folder in the background-enabled app:
+
+```bash
+CODE_YOUTUBE_BG_OPACITY=0.90 code-youtube-bg --open . --audio --volume 0.50 'https://www.youtube.com/watch?v=VIDEO_ID'
+```
+
 Play a YouTube playlist embed:
 
 ```bash
@@ -70,6 +76,7 @@ CODE_YOUTUBE_BG_OPACITY=0.85 code-youtube-bg --mute 'https://www.youtube.com/wat
 - `--volume 0.50` sets audio volume from `0.0` to `1.0`.
 - `--mute` disables audio.
 - `--audio` enables audio.
+- `--open .` opens a folder or file in `Code Video BG.app`.
 - `CODE_YOUTUBE_BG_DEBUG_PORT=9223` changes the local DevTools port used to unlock iframe audio.
 
 ## Stop Audio
@@ -98,6 +105,7 @@ Remove app support data too:
 
 - This is experimental and macOS-only.
 - This public build uses YouTube's embeddable iframe player. It does not download videos or resolve direct media stream URLs.
+- Regular Visual Studio Code windows are not modified. Use `--open .` or open `Code Video BG.app` for windows that should show the video background.
 - `--audio` starts the dedicated app with a localhost-only DevTools port so the command can perform the same user-gesture click YouTube requires for iframe audio.
 - Videos must allow YouTube embedding. Age gates, sign-in checks, regional restrictions, and embedding-disabled videos are handled by YouTube and are not bypassed.
 - Playlist URLs are resolved through YouTube's public Atom feed and played as a queue of regular YouTube iframe embeds. This avoids direct media URLs while working around playlist embeds that YouTube rejects.

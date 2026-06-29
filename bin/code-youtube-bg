@@ -4,13 +4,14 @@ set -euo pipefail
 usage() {
   cat <<'USAGE'
 Usage:
-  code-youtube-bg [--embed] [--audio|--mute] [--volume 0.7] <youtube-url-or-video-id>
+  code-youtube-bg [--embed] [--audio|--mute] [--volume 0.7] [--open <path>] <youtube-url-or-video-id>
 
 Examples:
   code-youtube-bg https://www.youtube.com/watch?v=SjmWM9P5mZ8
   code-youtube-bg https://www.youtube.com/playlist?list=PLxxxxxxxxxxxxxxxx
   code-youtube-bg SjmWM9P5mZ8
   code-youtube-bg --audio --volume 0.35 SjmWM9P5mZ8
+  code-youtube-bg --open . --mute SjmWM9P5mZ8
 
 Mode:
   This public build only uses YouTube's embeddable iframe player.
@@ -32,6 +33,7 @@ fi
 audio_enabled="${CODE_YOUTUBE_BG_AUDIO:-0}"
 volume="${CODE_YOUTUBE_BG_VOLUME:-0.7}"
 args=()
+open_paths=()
 
 while [[ $# -gt 0 ]]; do
   case "${1:-}" in
@@ -57,6 +59,14 @@ while [[ $# -gt 0 ]]; do
         exit 1
       fi
       volume="$2"
+      shift 2
+      ;;
+    --open)
+      if [[ $# -lt 2 ]]; then
+        echo "--open requires a folder or file path" >&2
+        exit 1
+      fi
+      open_paths+=("$2")
       shift 2
       ;;
     --audio-engine|--audio-delay)
@@ -361,6 +371,68 @@ activate_code_video_bg() {
     -e 'ignoring application responses' \
     -e 'tell application id "com.naoto.CodeVideoBG" to activate' \
     -e 'end ignoring' >/dev/null 2>&1 || true
+}
+
+normal_code_running() {
+  osascript -e 'application id "com.microsoft.VSCode" is running' 2>/dev/null | grep -q true
+}
+
+normalize_open_path() {
+  local raw="$1"
+  local expanded="$raw"
+
+  case "$raw" in
+    "~")
+      expanded="$HOME"
+      ;;
+    "~/"*)
+      expanded="$HOME/${raw#~/}"
+      ;;
+  esac
+
+  case "$expanded" in
+    *://*)
+      printf '%s\n' "$expanded"
+      return 0
+      ;;
+    /*)
+      ;;
+    *)
+      expanded="$PWD/$expanded"
+      ;;
+  esac
+
+  if [[ ! -e "$expanded" ]]; then
+    echo "--open path does not exist: $raw" >&2
+    exit 1
+  fi
+
+  printf '%s\n' "$expanded"
+}
+
+open_code_video_bg_path() {
+  local open_path="$1"
+  local cli="$app/Contents/Resources/app/bin/code"
+
+  if [[ -x "$cli" ]]; then
+    "$cli" \
+      --user-data-dir "$user_data" \
+      --extensions-dir "$extensions_dir" \
+      --new-window "$open_path" >/dev/null 2>&1 && return 0
+  fi
+
+  open -b "com.naoto.CodeVideoBG" --args --new-window "$open_path" >/dev/null 2>&1 || true
+}
+
+warn_if_normal_code_running() {
+  if normal_code_running; then
+    cat >&2 <<'WARN'
+Note: regular Visual Studio Code is also running.
+code-youtube-bg only affects the dedicated Code Video BG.app window.
+To open the current folder in the background-enabled app, run:
+  code-youtube-bg --open . <youtube-url-or-video-id>
+WARN
+  fi
 }
 
 debug_available() {
@@ -940,6 +1012,17 @@ if [[ "$audio_enabled" == "1" && "$app_running" == "1" ]] && ! debug_available; 
   app_running=0
 fi
 
+normalized_open_paths=()
+for raw_open_path in "${open_paths[@]}"; do
+  normalized_open_paths+=("$(normalize_open_path "$raw_open_path")")
+done
+
+launch_path="$HOME"
+if [[ ${#normalized_open_paths[@]} -gt 0 ]]; then
+  launch_path="${normalized_open_paths[0]}"
+fi
+opened_launch_path=0
+
 if [[ "$app_running" == "0" ]]; then
   open -na "$app" --args \
     --user-data-dir "$user_data" \
@@ -948,12 +1031,24 @@ if [[ "$app_running" == "0" ]]; then
     --password-store=basic \
     --use-mock-keychain \
     --remote-debugging-port="$debug_port" \
-    --new-window "$HOME"
+    --new-window "$launch_path"
   sleep 3
+  opened_launch_path=1
   echo "Code Video BG launched with YouTube embed background: $target_url"
 else
   echo "Code Video BG YouTube embed background updated without restart: $target_url"
 fi
 
+if [[ ${#normalized_open_paths[@]} -gt 0 ]]; then
+  start_index=0
+  if [[ "$opened_launch_path" == "1" ]]; then
+    start_index=1
+  fi
+  for ((i = start_index; i < ${#normalized_open_paths[@]}; i++)); do
+    open_code_video_bg_path "${normalized_open_paths[$i]}"
+  done
+fi
+
 activate_code_video_bg
 unlock_youtube_audio
+warn_if_normal_code_running
