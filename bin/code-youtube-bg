@@ -104,7 +104,7 @@ html_backup_path="$html_path.before-youtube-bg"
 runtime_js_path="$app/Contents/Resources/app/out/vs/code/electron-browser/workbench/code-youtube-bg-runtime.js"
 state_path="$user_data/youtube-bg.json"
 live_state_path="$user_data/live-state.json"
-runtime_marker="code-youtube-bg-embed-runtime.v6"
+runtime_marker="code-youtube-bg-embed-runtime.v7"
 server_log_path="$user_data/youtube-bg-server.log"
 server_err_path="$user_data/youtube-bg-server.err"
 server_pid_path="$user_data/youtube-bg-server.pid"
@@ -502,7 +502,7 @@ health_ok() {
 const expected = process.argv[2];
 try {
   const health = JSON.parse(process.env.HEALTH_JSON || '{}');
-  process.exit(health.serverVersion === 21 && health.currentTargetId === expected ? 0 : 1);
+  process.exit(health.serverVersion === 22 && health.currentTargetId === expected ? 0 : 1);
 } catch {
   process.exit(1);
 }
