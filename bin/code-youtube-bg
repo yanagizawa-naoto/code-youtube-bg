@@ -8,6 +8,7 @@ Usage:
 
 Examples:
   code-youtube-bg https://www.youtube.com/watch?v=SjmWM9P5mZ8
+  code-youtube-bg https://www.youtube.com/playlist?list=PLxxxxxxxxxxxxxxxx
   code-youtube-bg SjmWM9P5mZ8
   code-youtube-bg --audio --volume 0.35 SjmWM9P5mZ8
 
@@ -135,12 +136,37 @@ fi
 
 mkdir -p "$user_data" "$extensions_dir"
 
-video_meta="$("$node_bin" - "$input" <<'NODE'
+target_meta="$("$node_bin" - "$input" <<'NODE'
 const input = process.argv[2];
 
-function extractVideoId(value) {
+function isVideoId(value) {
+  return /^[A-Za-z0-9_-]{11}$/.test(value || '');
+}
+
+function isPlaylistId(value) {
+  return /^[A-Za-z0-9_-]{12,128}$/.test(value || '');
+}
+
+function extractTarget(value) {
   const trimmed = String(value || '').trim();
-  if (/^[A-Za-z0-9_-]{11}$/.test(trimmed)) return trimmed;
+  if (isVideoId(trimmed)) {
+    return {
+      kind: 'video',
+      videoId: trimmed,
+      playlistId: '',
+      targetId: trimmed,
+      url: `https://www.youtube.com/watch?v=${trimmed}`,
+    };
+  }
+  if (isPlaylistId(trimmed)) {
+    return {
+      kind: 'playlist',
+      videoId: '',
+      playlistId: trimmed,
+      targetId: trimmed,
+      url: `https://www.youtube.com/playlist?list=${trimmed}`,
+    };
+  }
 
   let parsed;
   try {
@@ -150,32 +176,63 @@ function extractVideoId(value) {
   }
 
   const host = parsed.hostname.replace(/^www\./, '');
-  let id = null;
+  let videoId = null;
+  let playlistId = null;
 
   if (host === 'youtu.be') {
-    id = parsed.pathname.split('/').filter(Boolean)[0];
+    videoId = parsed.pathname.split('/').filter(Boolean)[0];
+    playlistId = parsed.searchParams.get('list');
   } else if (host.endsWith('youtube.com') || host.endsWith('youtube-nocookie.com')) {
-    id = parsed.searchParams.get('v');
-    if (!id) {
+    playlistId = parsed.searchParams.get('list');
+    videoId = parsed.searchParams.get('v');
+    if (!videoId) {
       const parts = parsed.pathname.split('/').filter(Boolean);
       const marker = parts.findIndex(part => ['embed', 'shorts', 'live'].includes(part));
-      if (marker !== -1) id = parts[marker + 1];
+      if (marker !== -1) videoId = parts[marker + 1];
     }
+  } else {
+    throw new Error(`Not a YouTube URL or supported ID: ${trimmed}`);
   }
 
-  if (!id || !/^[A-Za-z0-9_-]{11}$/.test(id)) {
+  videoId = isVideoId(videoId) ? videoId : '';
+  playlistId = isPlaylistId(playlistId) ? playlistId : '';
+
+  if (playlistId) {
+    return {
+      kind: 'playlist',
+      videoId,
+      playlistId,
+      targetId: playlistId,
+      url: videoId
+        ? `https://www.youtube.com/watch?v=${videoId}&list=${playlistId}`
+        : `https://www.youtube.com/playlist?list=${playlistId}`,
+    };
+  }
+
+  if (videoId) {
+    return {
+      kind: 'video',
+      videoId,
+      playlistId: '',
+      targetId: videoId,
+      url: `https://www.youtube.com/watch?v=${videoId}`,
+    };
+  }
+
+  if (!videoId && !playlistId) {
     throw new Error(`Could not extract a YouTube video ID from: ${trimmed}`);
   }
-
-  process.stdout.write(`${id}\thttps://www.youtube.com/watch?v=${id}`);
 }
 
-extractVideoId(input);
+process.stdout.write(JSON.stringify(extractTarget(input)));
 NODE
 )"
 
-video_id="${video_meta%%$'\t'*}"
-video_url="${video_meta#*$'\t'}"
+target_kind="$("$node_bin" -e "process.stdout.write(JSON.parse(process.argv[1]).kind)" "$target_meta")"
+video_id="$("$node_bin" -e "process.stdout.write(JSON.parse(process.argv[1]).videoId)" "$target_meta")"
+playlist_id="$("$node_bin" -e "process.stdout.write(JSON.parse(process.argv[1]).playlistId)" "$target_meta")"
+target_id="$("$node_bin" -e "process.stdout.write(JSON.parse(process.argv[1]).targetId)" "$target_meta")"
+target_url="$("$node_bin" -e "process.stdout.write(JSON.parse(process.argv[1]).url)" "$target_meta")"
 
 opacity="$("$node_bin" - "$opacity" <<'NODE'
 const value = Number(process.argv[2]);
@@ -234,11 +291,11 @@ activate_code_video_bg() {
 
 health_ok() {
   local health_json="$1"
-  HEALTH_JSON="$health_json" "$node_bin" - "$video_id" <<'NODE' >/dev/null 2>&1
+  HEALTH_JSON="$health_json" "$node_bin" - "$target_id" <<'NODE' >/dev/null 2>&1
 const expected = process.argv[2];
 try {
   const health = JSON.parse(process.env.HEALTH_JSON || '{}');
-  process.exit(health.serverVersion === 17 && health.currentVideoId === expected ? 0 : 1);
+  process.exit(health.serverVersion === 18 && health.currentTargetId === expected ? 0 : 1);
 } catch {
   process.exit(1);
 }
@@ -274,14 +331,14 @@ start_bg_server() {
   : > "$server_log_path"
   : > "$server_err_path"
 
-  "$node_bin" - "$server_plist_path" "$server_label" "$node_bin" "$server_path" "$video_id" "$server_port" "$live_state_path" "$server_log_path" "$server_err_path" <<'NODE'
+  "$node_bin" - "$server_plist_path" "$server_label" "$node_bin" "$server_path" "$target_id" "$server_port" "$live_state_path" "$server_log_path" "$server_err_path" <<'NODE'
 const fs = require('fs');
 const [
   plistPath,
   label,
   nodeBin,
   serverPath,
-  videoId,
+  targetId,
   serverPort,
   liveStatePath,
   serverLogPath,
@@ -312,7 +369,7 @@ const xml = `<?xml version="1.0" encoding="UTF-8"?>
 \t<key>Label</key>
 \t<string>${esc(label)}</string>
 \t<key>ProgramArguments</key>
-\t${stringArray([nodeBin, serverPath, videoId, serverPort])}
+\t${stringArray([nodeBin, serverPath, targetId, serverPort])}
 \t<key>EnvironmentVariables</key>
 \t${envDict({
   CODE_YOUTUBE_BG_STATE_PATH: liveStatePath,
@@ -333,7 +390,7 @@ NODE
 
   if ! launchctl bootstrap "gui/$(id -u)" "$server_plist_path" 2>>"$server_err_path"; then
     nohup /usr/bin/env CODE_YOUTUBE_BG_STATE_PATH="$live_state_path" \
-      "$node_bin" "$server_path" "$video_id" "$server_port" \
+      "$node_bin" "$server_path" "$target_id" "$server_port" \
       >>"$server_log_path" 2>>"$server_err_path" </dev/null &
     local new_server_pid="$!"
     printf '%s\n' "$new_server_pid" > "$server_pid_path"
@@ -360,11 +417,11 @@ NODE
   fi
 }
 
-patch_result="$("$node_bin" - "$input" "$opacity" "$audio_enabled" "$volume" "$server_port" "$js_path" "$backup_path" "$html_path" "$html_backup_path" "$runtime_js_path" "$state_path" "$live_state_path" "$video_id" "$runtime_marker" <<'NODE'
+patch_result="$("$node_bin" - "$input" "$opacity" "$audio_enabled" "$volume" "$server_port" "$js_path" "$backup_path" "$html_path" "$html_backup_path" "$runtime_js_path" "$state_path" "$live_state_path" "$target_kind" "$video_id" "$playlist_id" "$target_id" "$runtime_marker" <<'NODE'
 const fs = require('fs');
 const path = require('path');
 
-const [input, opacityText, audioEnabledText, volumeText, serverPortText, jsPath, backupPath, htmlPath, htmlBackupPath, runtimeJsPath, statePath, liveStatePath, videoId, runtimeMarker] = process.argv.slice(2);
+const [input, opacityText, audioEnabledText, volumeText, serverPortText, jsPath, backupPath, htmlPath, htmlBackupPath, runtimeJsPath, statePath, liveStatePath, targetKind, videoId, playlistId, targetId, runtimeMarker] = process.argv.slice(2);
 const opacity = Number(opacityText);
 const muted = audioEnabledText !== '1';
 const volume = Number(volumeText);
@@ -455,7 +512,9 @@ function liveCss(op){
 }
 function wrapperSrc(state,key){
   var params=new URLSearchParams({
+    kind:String(state.kind||state.type||'video'),
     v:String(state.videoId||''),
+    list:String(state.playlistId||''),
     token:key,
     muted:state.muted===false?'0':'1',
     volume:String(clamp(Number(state.volume)||0,0,1)),
@@ -469,7 +528,9 @@ function report(reason,state){
       runtime:RUNTIME,
       reason:reason||'tick',
       key:currentKey,
+      kind:state&&state.kind||'',
       videoId:state&&state.videoId||'',
+      playlistId:state&&state.playlistId||'',
       muted:!(state&&state.muted===false),
       volume:state&&state.volume,
       receivedAt:new Date().toISOString()
@@ -477,14 +538,14 @@ function report(reason,state){
   }catch(e){}
 }
 function applyState(state){
-  if(!state||!state.videoId)return;
+  if(!state||!(state.videoId||state.playlistId))return;
   ensure();
   var op=Number(state.opacity);
   if(!isFinite(op))op=0.75;
   op=clamp(op,0,1);
   style.textContent=liveCss(op);
   report('state-applied',state);
-  var key=String(state.mediaToken||state.updatedAt||state.videoId);
+  var key=String(state.mediaToken||state.updatedAt||state.playlistId||state.videoId);
   if(frame&&currentKey===key){
     report('unchanged',state);
     return;
@@ -547,11 +608,14 @@ if (runtimeChanged) {
   fs.writeFileSync(runtimeJsPath, runtime, 'utf8');
 }
 
-const mediaToken = `${Date.now()}-${videoId}`;
+const mediaToken = `${Date.now()}-${targetId}`;
 const commonState = {
   type: 'embed',
+  kind: targetKind,
   input,
   videoId,
+  playlistId,
+  targetId,
   mediaToken,
   muted,
   volume,
@@ -568,7 +632,7 @@ fs.writeFileSync(liveStatePath, JSON.stringify(commonState, null, 2) + '\n');
 
 console.log(`needs_restart=${jsChanged || runtimeChanged ? 1 : 0}`);
 console.log(`html_changed=${htmlChanged ? 1 : 0}`);
-console.log(`YouTube embed background set for ${videoId}`);
+console.log(`YouTube embed background set for ${targetId}`);
 NODE
 )"
 
@@ -603,9 +667,9 @@ if [[ "$app_running" == "0" ]]; then
     --use-mock-keychain \
     --new-window "$HOME"
   sleep 3
-  echo "Code Video BG launched with YouTube embed background: $video_url"
+  echo "Code Video BG launched with YouTube embed background: $target_url"
 else
-  echo "Code Video BG YouTube embed background updated without restart: $video_url"
+  echo "Code Video BG YouTube embed background updated without restart: $target_url"
 fi
 
 activate_code_video_bg
